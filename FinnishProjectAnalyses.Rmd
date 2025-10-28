@@ -1,0 +1,3974 @@
+---
+title: "FinnishDataProject"
+author: "Sergio Vela Moreno"
+date: "2024-05-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Data loading:
+
+```{r}
+setwd("C:/Users/sergio.vela/Desktop/FinnishProject")
+getwd()=="C:/Users/sergio.vela/Desktop/FinnishProject"
+```
+
+```{r}
+library(readr)
+
+DatasetRiskOfRecurrence <- read.csv("DatasetRiskOfRecurrenceFinnishCohort.csv")
+
+DatasetRiskOfRecurrence <- DatasetRiskOfRecurrence[,-1]
+```
+
+```{r}
+vectorConMuchosNAs <- vector()
+
+for (i in 1:NCOL(DatasetRiskOfRecurrence)) {
+  if (NROW (DatasetRiskOfRecurrence %>% 
+            dplyr::filter(DatasetRiskOfRecurrence[i] != "NA")) / NROW(DatasetRiskOfRecurrence) < 0.7) {
+    print(i)
+    vectorConMuchosNAs <- append(vectorConMuchosNAs,i)
+  }
+}
+```
+
+```{r}
+DatasetTP53MMRdRiskOfRecurrenceDef <- DatasetRiskOfRecurrence[,-c(1,4,33)]
+
+DatasetTP53MMRdRiskOfRecurrenceTraditional <- DatasetRiskOfRecurrence[,-c(1,31,32,33)]
+
+DatasetTP53MMRdRiskOfRecurrenceTraditionalESGO <- DatasetRiskOfRecurrence[,-c(4,31,32,33)]
+
+DatasetTP53MMRdRiskOfRecurrencePOLE <- DatasetRiskOfRecurrence[,-c(1,4,31,32)]
+
+#write.csv(DatasetTP53MMRdRiskOfRecurrenceDef, "DatasetTP53MMRdRiskOfRecurrence.csv")
+#write.csv(DatasetTP53MMRdRiskOfRecurrenceTraditional, "DatasetTraditionalRiskOfRecurrence.csv")
+#write.csv(DatasetTP53MMRdRiskOfRecurrenceTraditionalESGO, "DatasetESGORiskOfRecurrence.csv")
+#write.csv(DatasetTP53MMRdRiskOfRecurrencePOLE, "DatasetPOLERiskOfRecurrence.csv")
+```
+
+#### Applied molecular distribution:
+
+```{r}
+summary(DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrenceTraditional$`Applied Molecular Classification`)
+
+ggplot(DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrenceTraditional, mapping = aes(x = DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrenceTraditional$`Applied Molecular Classification`)) +
+  geom_bar(mapping = aes(fill = DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrenceTraditional$`Applied Molecular Classification`)) + scale_fill_discrete(name = "Molecular subtype") + ggtitle("Molecular distribution of samples") +
+  xlab("Subtype") + ylab("Count") + theme_bw() +
+   geom_text(aes(label = ..count..), stat = "count", vjust = 2, colour = "white")
+```
+
+#### Demographics tables:
+
+```{r}
+library(tidyverse)
+library(finalfit)
+
+DatasetRiskOfRecurrence <- read.csv("DatasetRiskOfRecurrenceFinnishCohort.csv")
+
+explanatory <- c("MolecularESGOESTROESP2021", "AppliedMolecularClassification", "p53ab", "MMRd", "POLE", "StageIvsIItoIV",  "HistologyandGrade", "LVSI", "MyometrialInvasion","cytology", "TumorSize","DiabetesMellitus", "BMI", "Age", "Smoker", "ASAScore", "Thrombocyte", "Leucocyte", "Haemoglobin","Ca125","PDL1intensity", "TILPDL1to10","ARID1AIHC", "EstrogenReceptor1", "ProgesteroneRececeptor","HER2", "betacatenin",  "HNFβ", "P16", "Ecadherin", "vimentin", "CD171pn")
+
+TablaDemograficaRecurRisk <-  DatasetRiskOfRecurrence %>% 
+  summary_factorlist("RecurrenceRisk", explanatory,
+                     p=TRUE, na_include=TRUE)
+
+TablaDemograficaRecurRisk
+
+#writexl::write_xlsx(TablaDemograficaRecurRisk, "DemographicTableRelapseRisk.xlsx")
+
+library(readxl)
+TablaDemograficaRecurRisk <- read_excel("DemographicTableRelapseRisk.xlsx")
+
+TablaDemograficaRecurRisk
+```
+
+### TP53 + MMRd rfe with tidymodels:
+
+```{r}
+# install.packages(c("tidymodels", "vip", "themis"))
+
+library(tidymodels)
+library(vip)
+library(themis)
+
+# ---------------------------
+# Step 0: Data partition
+# ---------------------------
+
+library(readr)
+DatasetTP53MMRdRiskOfRecurrenceDef <- read_csv("DatasetTP53MMRdRiskOfRecurrence.csv")
+
+DatasetTP53MMRdRiskOfRecurrenceDefPrueba <- DatasetTP53MMRdRiskOfRecurrenceDef
+
+receta <- recipe(`Recurrence risk` ~ ., data =DatasetTP53MMRdRiskOfRecurrenceDefPrueba) %>%
+  step_zv(all_predictors()) %>%    # Eliminates predictors without variation
+  step_normalize(all_numeric_predictors()) %>%    # Standardizes numeric covariates
+  step_dummy(all_nominal_predictors())            # Transforms factor features to dummies
+    
+set.seed(123)
+split <- initial_split(DatasetTP53MMRdRiskOfRecurrenceDefPrueba, prop = 0.7, strata = `Recurrence risk`)
+datos_train <- training(split)
+datos_testValidation  <- testing(split)
+
+split2 <- initial_split(datos_testValidation, prop = 0.7, strata = `Recurrence risk`)
+
+datos_test <- training(split2)
+datos_Validation  <- testing(split2)
+
+# Asegurar que la clase es factor
+datos_train$`Recurrence risk` <- factor(datos_train$`Recurrence risk`)
+datos_test$`Recurrence risk` <- factor(datos_test$`Recurrence risk`, levels = levels(datos_train$`Recurrence risk`))
+
+datos_train <- datos_train %>%
+  rename(recurrence_risk = `Recurrence risk`)
+
+datos_test <- datos_test %>%
+  rename(recurrence_risk = `Recurrence risk`)
+
+# ---------------------------
+# Paso 1: Receta base
+# ---------------------------
+receta_base <- recipe(recurrence_risk ~ ., data = datos_train) %>%
+  step_zv(all_predictors()) %>%                      # Eliminates predictors without variation
+  step_normalize(all_numeric_predictors()) %>%    # Standardizes numeric covariates
+  step_dummy(all_nominal_predictors())            # Transforms factor features to dummies
+
+# Preprocesar la receta base
+receta_base_preparada <- prep(receta_base, training = datos_train, retain = TRUE)
+
+datos_procesados <- juice(receta_base_preparada)
+
+# ---------------------------
+# Paso 3: Obtener importancia de variables (suponiendo que usamos Random Forest)
+# ---------------------------
+modelo_rf <- rand_forest(mode = "classification", trees = 500) %>%
+  set_engine("ranger", importance = "impurity")
+
+modelo_base <- modelo_rf %>%
+  fit(recurrence_risk ~ ., data = datos_procesados)
+
+# Entrenar modelo base para obtener importancia
+vip_vals <- modelo_base %>% vi()
+
+variables_ordenadas <- vip_vals %>%
+  arrange(desc(Importance)) %>%
+  pull(Variable)
+
+# -----------------------
+# 4. Validación cruzada
+# -----------------------
+cv_folds <- vfold_cv(datos_train, v = 5, strata = recurrence_risk)
+
+# -----------------------
+# 5. Función para evaluar con top-N variables
+# -----------------------
+evaluar_con_top_n <- function(n) {
+  print(n)
+  n_local <- n
+  top_vars <- variables_ordenadas[1:n_local]
+  top_vars <- union(top_vars, "recurrence_risk")
+  
+  receta_rfe <- recipe(recurrence_risk ~ ., data = datos_train) %>%
+    step_zv(all_predictors()) %>%
+    step_normalize(all_numeric_predictors()) %>%
+    step_dummy(all_nominal_predictors()) %>%
+    # Truco: ignorar todas las variables menos las top
+    #update_role(all_predictors(), new_role = "ignore") %>%
+    #update_role(all_of(top_vars), new_role = "predictor") %>%
+    step_smote(recurrence_risk) %>%
+    step_select(all_of(top_vars))
+  
+  wf <- workflow() %>%
+    add_model(modelo_rf) %>%
+    add_recipe(receta_rfe) 
+
+  res <- fit_resamples(
+    wf,
+    resamples = cv_folds,
+    metrics = metric_set(accuracy, f_meas, kap, roc_auc, pr_auc),
+    control = control_resamples(save_pred = TRUE)
+  )
+  
+  collect_metrics(res) %>%
+    mutate(num_vars = n_local)
+}
+
+# -----------------------
+# 6. Ejecutar RFE
+# -----------------------
+top_n_valores <- c(5:30)
+
+resultados_rfe <- map_dfr(top_n_valores, evaluar_con_top_n)
+
+#saveRDS(resultados_rfe, "RFEresultsTP53MMRd.rds")
+#saveRDS(variables_ordenadas, "MoreToleastImportantFeaturesTP53MMRd.rds")
+#write.csv(resultados_rfe, "RFEresultsTP53MMRd.csv")
+
+resultados_rfe <- readRDS("RFEresultsTP53MMRd.rds")
+variables_ordenadas <- readRDS("MoreToleastImportantFeaturesTP53MMRd.rds")
+
+# ---------------------------
+# Paso 6: Elegir el mejor conjunto de variables
+# ---------------------------
+mejor_n <- resultados_rfe %>%
+  filter(.metric == "f_meas") %>%
+  arrange(desc(mean)) %>%
+  slice(1) %>%
+  pull(num_vars)
+
+cat("Best number of features according to F1-score:", mejor_n, "\n") #19
+
+# ---------------------------
+# Paso 7: Reentrenar modelo final con ese conjunto
+# ---------------------------
+mejores_vars <- variables_ordenadas[1:19]
+"recurrence_risk" %in% mejores_vars
+
+mejores_vars <- setdiff(mejores_vars, "recurrence_risk")
+
+receta_final <- recipe(recurrence_risk ~ ., data = datos_train) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  update_role(recurrence_risk, new_role = "outcome") %>%
+  step_select(all_of(mejores_vars), starts_with("recurrence_risk")) %>%
+  step_smote(recurrence_risk, skip = TRUE)
+
+prep(receta_final, training = datos_train) %>% juice() %>% names() %>% any(. == "recurrence_risk")
+
+wf_final <- workflow() %>%
+  add_model(modelo_rf) %>%
+  add_recipe(receta_final)
+
+fit_final <- fit(
+  wf_final,
+  data = datos_train)
+
+
+# ---------------------------
+# Paso 8: Evaluar en test
+# ---------------------------
+receta_eval <- receta_final %>% prep(training = datos_train, retain = TRUE)
+datos_train_bake <- bake(receta_eval, new_data = datos_train)
+datos_test_bake <- bake(receta_eval, new_data = datos_test)
+
+names(datos_test_bake)
+
+fit_final %>% extract_fit_parsnip() %>% .$fit %>% names()
+```
+
+#### Training with GBM:
+```{r}
+set.seed(123)
+n_valores = 10
+seeds <- vector(mode = "list", length = 11)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+seeds[[11]] <- sample.int(1000, 1)
+
+f1 <- function(data, lev = NULL, model = NULL) {
+    f1_val <- f1_score(data$pred,data$obs)
+    names(f1_val) <- c("F1")
+    f1_val
+}
+
+f1_score <- function(predicted, expected, positive.class="1") {
+    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
+    expected  <- as.factor(expected)
+    cm = as.matrix(table(expected, predicted))
+
+    precision <- diag(cm) / colSums(cm)
+    recall <- diag(cm) / rowSums(cm)
+    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
+
+    #Assuming that F1 is zero when it's not possible compute it
+    f1[is.na(f1)] <- 0
+
+    #Binary F1 or Multi-class macro-averaged F1
+    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
+}
+
+fitControltp53MMRdF1 <- trainControl(method="cv", number = 10,
+                                        seeds = seeds,
+                                        returnResamp = "final",
+                                        search = "grid",
+                                        verboseIter=FALSE,
+                                        allowParallel = TRUE,
+                                        classProbs = T,
+                                        summaryFunction = f1)
+
+fitControltp53MMRdF1$sampling <- "smote" #smote
+```
+
+```{r}
+opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels <- datos_train_bake
+
+levels(opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk) <- c("NoRelapse", "EarlyRelapse", "LateRelpase")
+
+opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels <- droplevels(opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels)
+
+opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels <- datos_test_bake
+
+levels(opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk) <- c("NoRelapse", "EarlyRelapse", "LateRelpase")
+
+opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels <- droplevels(opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels)
+
+gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9), 
+                        n.trees = (1:30)*50, 
+                        shrinkage = 0.1,
+                        n.minobsinnode = 20)
+```
+
+```{r}
+set.seed(342)
+TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels,
+                            method="gbm",
+                            tuneLength = n_valores,
+                            trControl=fitControltp53MMRdF1,
+                            tuneGrid = gbmGrid,
+                            metric='F1')
+
+TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels
+
+
+#saveRDS(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, file = "TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthF1TidymodelsSeptember.rds")
+
+TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthF1TidymodelsSeptember.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+```
+
+#### Rf:
+
+```{r}
+set.seed(123)
+n_valores = 10
+seeds <- vector(mode = "list", length = 11)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+seeds[[11]] <- sample.int(1000, 1)
+
+f1 <- function(data, lev = NULL, model = NULL) {
+    f1_val <- f1_score(data$pred,data$obs)
+    names(f1_val) <- c("F1")
+    f1_val
+}
+
+f1_score <- function(predicted, expected, positive.class="1") {
+    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
+    expected  <- as.factor(expected)
+    cm = as.matrix(table(expected, predicted))
+
+    precision <- diag(cm) / colSums(cm)
+    recall <- diag(cm) / rowSums(cm)
+    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
+
+    #Assuming that F1 is zero when it's not possible compute it
+    f1[is.na(f1)] <- 0
+
+    #Binary F1 or Multi-class macro-averaged F1
+    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
+}
+
+fitControltp53MMRdF1 <- trainControl(method="cv", number = 10,
+                                        seeds = seeds,
+                                        returnResamp = "final",
+                                        search = "grid",
+                                        verboseIter=FALSE,
+                                        allowParallel = TRUE,
+                                        classProbs = T,
+                                        summaryFunction = f1)
+
+fitControltp53MMRdF1$sampling <- "smote" #smote
+```
+
+```{r}
+set.seed(342)
+TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels,
+                            method="rf",
+                            tuneLength = n_valores,
+                            trControl=fitControltp53MMRdF1,
+                            metric='F1')
+
+TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels
+
+
+#saveRDS(TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels, file = "TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodelsF1.rds")
+
+TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodelsF1.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+```
+
+#### KNN:
+
+```{r}
+knn_grid <- expand.grid(k = seq(3, 21, by = 2)) 
+```
+
+```{r}
+set.seed(123)
+n_valores = 10
+seeds <- vector(mode = "list", length = 11)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+seeds[[11]] <- sample.int(1000, 1)
+
+f1 <- function(data, lev = NULL, model = NULL) {
+    f1_val <- f1_score(data$pred,data$obs)
+    names(f1_val) <- c("F1")
+    f1_val
+}
+
+f1_score <- function(predicted, expected, positive.class="1") {
+    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
+    expected  <- as.factor(expected)
+    cm = as.matrix(table(expected, predicted))
+
+    precision <- diag(cm) / colSums(cm)
+    recall <- diag(cm) / rowSums(cm)
+    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
+
+    #Assuming that F1 is zero when it's not possible compute it
+    f1[is.na(f1)] <- 0
+
+    #Binary F1 or Multi-class macro-averaged F1
+    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
+}
+
+fitControltp53MMRdF1 <- trainControl(method="cv", number = 10,
+                                        seeds = seeds,
+                                        returnResamp = "final",
+                                        search = "grid",
+                                        verboseIter=FALSE,
+                                        allowParallel = TRUE,
+                                        classProbs = T,
+                                        summaryFunction = f1)
+
+fitControltp53MMRdF1$sampling <- "smote" #smote
+```
+
+```{r}
+set.seed(342)
+TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels,
+                            method="knn",
+                            tuneLength = n_valores,
+                            trControl=fitControltp53MMRdF1,
+                            metric='F1',
+                            tuneGrid = knn_grid)
+
+TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels
+
+#saveRDS(TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels, file = "TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodelsF1.rds")
+
+TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodelsF1.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+```
+
+#### SVM:
+
+```{r}
+set.seed(123)
+n_valores = 10
+seeds <- vector(mode = "list", length = 11)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+seeds[[11]] <- sample.int(1000, 1)
+
+f1 <- function(data, lev = NULL, model = NULL) {
+    f1_val <- f1_score(data$pred,data$obs)
+    names(f1_val) <- c("F1")
+    f1_val
+}
+
+f1_score <- function(predicted, expected, positive.class="1") {
+    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
+    expected  <- as.factor(expected)
+    cm = as.matrix(table(expected, predicted))
+
+    precision <- diag(cm) / colSums(cm)
+    recall <- diag(cm) / rowSums(cm)
+    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
+
+    #Assuming that F1 is zero when it's not possible compute it
+    f1[is.na(f1)] <- 0
+
+    #Binary F1 or Multi-class macro-averaged F1
+    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
+}
+
+svm_grid <- expand.grid(
+  C = 2^(-1:2),
+  sigma = 2^(-2:1)
+)
+n_modelos <- nrow(svm_grid)  # 16 combinaciones
+
+# Semillas reproducibles
+set.seed(123)
+num_folds <- 10 
+seeds <- vector(mode = "list", length = num_folds + 1)
+for (i in 1:num_folds) {
+  seeds[[i]] <- sample.int(1000, n_modelos)
+}
+
+seeds[[num_folds + 1]] <- sample.int(1000, 1)
+
+fitControlF1 <- trainControl(
+  method = "cv",
+  number = 10,
+  seeds = seeds,
+  returnResamp = "final",
+  search = "grid",
+  verboseIter = FALSE,
+  allowParallel = TRUE,
+  classProbs = TRUE,
+  summaryFunction = f1,
+  sampling = "smote"  # Usar SMOTE en cada fold
+)
+```
+
+```{r}
+set.seed(342)
+TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels,
+                            method="svmRadial",
+                            tuneLength = n_valores,
+                            trControl=fitControlF1  ,
+                            metric='F1',
+                            tuneGrid = svm_grid)
+
+TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels
+
+#saveRDS(TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels, file = "TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodelsF1.rds")
+
+TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodelsF1.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+```
+
+
+
+
+```{r}
+library(caret)
+library(yardstick)
+library(dplyr)
+library(ggplot2)
+library(tibble)
+library(purrr)
+
+# Paso 1: Hacer predicciones
+
+prediccionestidymodels <- predict(gbmFit2TP53tidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels)
+
+# Paso 2: Asegurar factores y niveles iguales
+clase_realTidymodels <- factor(opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+prediccionesTidymodels <- factor(prediccionestidymodels, levels = levels(clase_realTidymodels))
+probs_tidymodels <- predict(
+  gbmFit2TP53tidymodels,
+  opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels,
+  type = "prob"
+)
+
+# Paso 3: Crear tibble de resultados
+df_resultadosTidymodels <- tibble(
+  truth = clase_realTidymodels,
+  predicted = factor(prediccionesTidymodels,levels = levels(clase_realTidymodels))
+) %>%
+  bind_cols(probs_tidymodels)
+
+# Paso 4: Extraer clases únicas
+clasesTidymodels <- levels(clase_realTidymodels)
+
+# Paso 5: Función para calcular métricas por clase (one-vs-rest)
+library(rlang)  
+
+calcular_metricas_por_claseTidymodels <- function(clase_objetivo) {
+  df_binario <- df_resultadosTidymodels %>%
+    mutate(
+      truth_bin = factor(ifelse(truth == clase_objetivo, "Sí", "No"), levels = c("Sí", "No")),
+      pred_bin  = factor(ifelse(predicted == clase_objetivo, "Sí", "No"), levels = c("Sí", "No"))
+    )
+  
+   precision <- yardstick::precision(data = df_binario, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  recall    <- yardstick::recall(data = df_binario, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  f1        <- yardstick::f_meas(data = df_binario, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  roc_auc_auc <- roc_auc(df_binario, truth_bin, !!sym(clase_objetivo), event_level = "first")$.estimate
+  pr_auc_auc  <- pr_auc(df_binario, truth_bin, !!sym(clase_objetivo), event_level = "first")$.estimate
+    
+   tibble(
+    Clase = clase_objetivo,
+    Métrica = c("Precision", "Recall", "F1-score", "ROC AUC", "PR AUC"),
+    Valor = c(precision, recall, f1, roc_auc_auc, pr_auc_auc)
+  )
+}
+
+# Paso 6: Aplicar a cada clase
+resultados_por_claseTidymodels <- map_dfr(clasesTidymodels, calcular_metricas_por_claseTidymodels)
+
+# Paso 7: Mostrar tabla con métricas
+print("Métricas por clase:")
+print(resultados_por_claseTidymodels)
+
+# Paso 8: Graficar métricas por clase
+ggplot(resultados_por_claseTidymodels, aes(x = Métrica, y = Valor, fill = Métrica)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~Clase) +
+  ylim(0, 1) +
+  labs(
+    title = "Metrics per class",
+    x = "Metric",
+    y = "Value"
+  ) +
+  theme_minimal(base_size = 8)
+```
+
+```{r}
+plot(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROC)
+```
+
+```{r}
+library(gbm)
+
+varImp(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROC, scale = T)
+```
+
+```{r}
+library(pROC)
+
+result.predicted.prob <- predict(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROC,opt.Datos.Test.FinnishRecurtp53MMRdROC, type="prob") # Prediction
+
+result.roc <- roc(opt.Datos.Test.FinnishRecurtp53MMRdROC$Clase, result.predicted.prob$EarlyRelapse) # Draw ROC curve.
+plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft")
+
+result.coords <- coords(result.roc, "best", best.method="closest.topleft", ret=c("threshold", "accuracy"))
+print(result.coords)#to get threshold and accuracy
+
+result.auc <- multiclass.roc(opt.Datos.Test.FinnishRecurtp53MMRdROC$Clase, result.predicted.prob) # Draw ROC curve.
+
+AUCplotTP53MMRdRiskRecur <-
+  par(pty = "s")
+plot.roc(result.auc$rocs$`EarlyRelapse/LateRelpase`[[1]], 
+         print.auc=T,
+         legacy.axes = T)
+plot.roc(result.auc$rocs$`EarlyRelapse/NoRelapse`[[1]],
+         add=T, col = 'red',
+         print.auc = T,
+         legacy.axes = T,
+         print.auc.adj = c(0,3))
+plot.roc(result.auc$rocs$`LateRelpase/NoRelapse`[[1]],add=T, col = 'blue',
+         print.auc=T,
+         legacy.axes = T,
+         print.auc.adj = c(0,5))
+
+legend('bottomright',
+       legend = c('EarlyRelapse/LateRelpase',
+                  'EarlyRelapse/NoRelapse',
+                  'LateRelpase/NoRelapse'),cex=0.75,
+       col=c('black','red','blue'),lwd=2)
+
+AUCplotTP53MMRdRiskRecur
+```
+
+```{r}
+library(kernelshap)
+library(shapviz)
+
+sRFFinnishRecurTP53MMRdTidymodels <- kernelshap(gbmFit2TP53tidymodels, X = opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels[,-20], bg_X = opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels, type = "prob") # if i don't set type= "prob", I run through "Predictions must be numeric".
+
+svFinnishRecurTP53MMRdTidymodels <- shapviz(sRFFinnishRecurTP53MMRdTidymodels)
+
+FeatureImportanceTP53MMRdTidymodels <- sv_importance(svFinnishRecurTP53MMRdTidymodels, kind = "bar",bar_type = "stack" , max_display = 10) + ylab("Feature") + xlab("Average absolute SHAP values") + theme(axis.text.y = element_text(size = 6),axis.text.x = element_text(size = 6))  
+
+FeatureImportanceTP53MMRdTidymodels
+
+#saveRDS(sRFFinnishRecurTP53MMRdTidymodels, "sRFFinnishRecurTP53MMRdTidymodels.rds")
+#saveRDS(FeatureImportanceTP53MMRdTidymodels, "FeatureImportanceTP53MMRdTidymodels.rds")
+
+FeatureImportanceTP53MMRdTidymodels <- readRDS("FeatureImportanceTP53MMRdTidymodels.rds")
+```
+
+### Traditional - rfe with tidymodels:
+
+```{r}
+# install.packages(c("tidymodels", "vip", "themis"))
+
+library(tidymodels)
+library(vip)
+library(themis)
+
+# ---------------------------
+# Paso 0: Partir los datos
+# ---------------------------
+library(readr)
+DatasetTP53MMRdRiskOfRecurrenceTraditional <- read_csv("DatasetTraditionalRiskOfRecurrence.csv")
+
+recetaTraditional <- recipe(`Recurrence risk` ~ ., data =DatasetTP53MMRdRiskOfRecurrenceTraditional) %>%
+  step_zv(all_predictors()) %>%    # Eliminates predictors without variation
+  step_normalize(all_numeric_predictors()) %>%    # Standardizes numeric covariates
+  step_dummy(all_nominal_predictors())            # Transforms factor features to dummies
+    
+set.seed(123)
+splitTraditional <- initial_split(DatasetTP53MMRdRiskOfRecurrenceTraditional, prop = 0.7, strata = `Recurrence risk`)
+datos_trainTraditional <- training(splitTraditional)
+datos_testValidationTraditional  <- testing(splitTraditional)
+
+splitTraditional2 <- initial_split(datos_testValidationTraditional, prop = 0.7, strata = `Recurrence risk`)
+datos_testTraditional <- training(splitTraditional2)
+datos_ValidationTraditional  <- testing(splitTraditional2)
+
+# Asegurar que la clase es factor
+datos_trainTraditional$`Recurrence risk` <- factor(datos_trainTraditional$`Recurrence risk`)
+datos_testTraditional$`Recurrence risk` <- factor(datos_testTraditional$`Recurrence risk`, levels = levels(datos_trainTraditional$`Recurrence risk`))
+
+datos_trainTraditional <- datos_trainTraditional %>%
+  rename(recurrence_risk = `Recurrence risk`)
+
+datos_testTraditional <- datos_testTraditional %>%
+  rename(recurrence_risk = `Recurrence risk`)
+
+# ---------------------------
+# Paso 1: Receta base
+# ---------------------------
+receta_baseTraditional <- recipe(recurrence_risk ~ ., data = datos_trainTraditional) %>%
+  step_zv(all_predictors()) %>%                      # Eliminates predictors without variation
+  step_normalize(all_numeric_predictors()) %>%    # Standardizes numeric covariates
+  step_dummy(all_nominal_predictors())            # Transforms factor features to dummies
+
+# Preprocesar la receta base
+receta_base_preparadaTraditional <- prep(receta_baseTraditional, training = datos_trainTraditional, retain = TRUE)
+
+datos_procesadosTraditional <- juice(receta_base_preparadaTraditional)
+
+# ---------------------------
+# Paso 3: Obtener importancia de variables (suponiendo que usamos Random Forest)
+# ---------------------------
+modelo_rfTraditional <- rand_forest(mode = "classification", trees = 500) %>%
+  set_engine("ranger", importance = "impurity")
+
+modelo_baseTraditional <- modelo_rfTraditional %>%
+  fit(recurrence_risk ~ ., data = datos_procesadosTraditional)
+
+# Entrenar modelo base para obtener importancia
+vip_valsTraditional <- modelo_baseTraditional %>% vi()
+
+variables_ordenadasTraditional <- vip_valsTraditional %>%
+  arrange(desc(Importance)) %>%
+  pull(Variable)
+
+# -----------------------
+# 4. Validación cruzada
+# -----------------------
+cv_foldsTraditional <- vfold_cv(datos_trainTraditional, v = 5, strata = recurrence_risk)
+
+# -----------------------
+# 5. Función para evaluar con top-N variables
+# -----------------------
+evaluar_con_top_nTraditional <- function(n) {
+  print(n)
+  n_local <- n
+  top_varsTraditional <- variables_ordenadasTraditional[1:n_local]
+  top_varsTraditional <- union(top_varsTraditional, "recurrence_risk")
+    
+  receta_rfeTraditional <- recipe(recurrence_risk ~ ., data = datos_trainTraditional) %>%
+    step_zv(all_predictors()) %>%
+    step_normalize(all_numeric_predictors()) %>%
+    step_dummy(all_nominal_predictors()) %>%
+    # Truco: ignorar todas las variables menos las top
+    #update_role(all_predictors(), new_role = "ignore") %>%
+    #update_role(all_of(top_vars), new_role = "predictor") %>%
+    step_smote(recurrence_risk) %>%
+    step_select(all_of(top_varsTraditional))
+  
+  wfTraditional <- workflow() %>%
+    add_model(modelo_rfTraditional) %>%
+    add_recipe(receta_rfeTraditional)  
+
+  resTraditional <- fit_resamples(
+    wfTraditional,
+    resamples = cv_foldsTraditional,
+    metrics = metric_set(accuracy, f_meas, kap, roc_auc, pr_auc),
+    control = control_resamples(save_pred = TRUE)
+  )
+  
+  collect_metrics(resTraditional) %>%
+    mutate(num_vars = n_local)
+}
+
+# -----------------------
+# 6. Ejecutar RFE
+# -----------------------
+top_n_valores <- c(5:30)
+
+resultados_rfeTraditional <- map_dfr(top_n_valores, evaluar_con_top_nTraditional)
+
+#saveRDS(resultados_rfeTraditional, "RFEresultsTraditional.rds")
+#saveRDS(variables_ordenadasTraditional, "MoreToleastImportantFeaturesTraditional.rds")
+#write.csv(resultados_rfeTraditional, "RFEresultsTraditional.csv")
+
+resultados_rfeTraditional <- readRDS("RFEresultsTraditional.rds")
+variables_ordenadasTraditional <- readRDS("MoreToleastImportantFeaturesTraditional.rds")
+
+# ---------------------------
+# Paso 6: Elegir el mejor conjunto de variables
+# ---------------------------
+mejor_nTraditional <- resultados_rfeTraditional %>%
+  filter(.metric == "f_meas") %>%
+  arrange(desc(mean)) %>%
+  slice(1) %>%
+  pull(num_vars)
+
+cat("Best number of features according to F1-score:", mejor_nTraditional, "\n") #22
+
+# ---------------------------
+# Paso 7: Reentrenar modelo final con ese conjunto
+# ---------------------------
+mejores_varsTraditional <- variables_ordenadasTraditional[1:22]
+"recurrence_risk" %in% mejores_varsTraditional
+
+mejores_varsTraditional <- setdiff(mejores_varsTraditional, "recurrence_risk")
+
+receta_finalTraditional <- recipe(recurrence_risk ~ ., data = datos_trainTraditional) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  update_role(recurrence_risk, new_role = "outcome") %>%
+  step_select(all_of(mejores_varsTraditional), starts_with("recurrence_risk")) %>%
+  step_smote(recurrence_risk, skip = TRUE)
+
+prep(receta_finalTraditional, training = datos_trainTraditional) %>% juice() %>% names() %>% any(. == "recurrence_risk")
+
+wf_finalTraditional <- workflow() %>%
+  add_model(modelo_rfTraditional) %>%
+  add_recipe(receta_finalTraditional)
+
+fit_finalTraditional <- fit(
+  wf_finalTraditional,
+  data = datos_trainTraditional)
+
+
+# ---------------------------
+# Paso 8: Evaluar en test
+# ---------------------------
+receta_evalTraditional <- receta_finalTraditional %>% prep(training = datos_trainTraditional, retain = TRUE)
+datos_train_bakeTraditional <- bake(receta_evalTraditional, new_data = datos_trainTraditional)
+datos_test_bakeTraditional <- bake(receta_evalTraditional, new_data = datos_testTraditional)
+
+names(datos_test_bakeTraditional)
+
+fit_finalTraditional %>% extract_fit_parsnip() %>% .$fit %>% names()
+```
+
+#### Training with GBM:
+
+```{r}
+set.seed(123)
+n_valores = 10
+seeds <- vector(mode = "list", length = 11)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+seeds[[11]] <- sample.int(1000, 1)
+
+f1 <- function(data, lev = NULL, model = NULL) {
+    f1_val <- f1_score(data$pred,data$obs)
+    names(f1_val) <- c("F1")
+    f1_val
+}
+
+f1_score <- function(predicted, expected, positive.class="1") {
+    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
+    expected  <- as.factor(expected)
+    cm = as.matrix(table(expected, predicted))
+
+    precision <- diag(cm) / colSums(cm)
+    recall <- diag(cm) / rowSums(cm)
+    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
+
+    #Assuming that F1 is zero when it's not possible compute it
+    f1[is.na(f1)] <- 0
+
+    #Binary F1 or Multi-class macro-averaged F1
+    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
+}
+
+fitControltp53MMRdF1 <- trainControl(method="cv", number = 10,
+                                        seeds = seeds,
+                                        returnResamp = "final",
+                                        search = "grid",
+                                        verboseIter=FALSE,
+                                        allowParallel = TRUE,
+                                        classProbs = T,
+                                        summaryFunction = f1)
+
+fitControltp53MMRdF1$sampling <- "smote" #smote
+```
+
+```{r}
+opt.Datos.Train.FinnishRecurTraditionaltidymodels <- datos_train_bakeTraditional
+
+levels(opt.Datos.Train.FinnishRecurTraditionaltidymodels$recurrence_risk) <- c("NoRelapse", "EarlyRelapse", "LateRelpase")
+
+opt.Datos.Train.FinnishRecurTraditionaltidymodels <- droplevels(opt.Datos.Train.FinnishRecurTraditionaltidymodels)
+
+opt.Datos.Test.FinnishRecurTraditionaltidymodels <- datos_test_bakeTraditional
+
+levels(opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk) <- c("NoRelapse", "EarlyRelapse", "LateRelpase")
+
+opt.Datos.Test.FinnishRecurTraditionaltidymodels <- droplevels(opt.Datos.Test.FinnishRecurTraditionaltidymodels)
+
+gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9), 
+                        n.trees = (1:30)*50, 
+                        shrinkage = 0.1,
+                        n.minobsinnode = 20)
+```
+
+```{r}
+set.seed(342)
+TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurTraditionaltidymodels,
+                            method="gbm",
+                            tuneLength = n_valores,
+                            trControl=fitControltp53MMRdF1,
+                            tuneGrid = gbmGrid,
+                            metric='F1')
+
+#TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels
+
+#saveRDS(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, file = "TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodelsSeptember.rds")
+
+TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodelsSeptember.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurTraditionaltidymodels),opt.Datos.Train.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurTraditionaltidymodels),opt.Datos.Train.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurTraditionaltidymodels),opt.Datos.Train.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+```
+
+#### Rf:
+
+```{r}
+set.seed(123)
+n_valores = 10
+seeds <- vector(mode = "list", length = 11)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+seeds[[11]] <- sample.int(1000, 1)
+
+f1 <- function(data, lev = NULL, model = NULL) {
+    f1_val <- f1_score(data$pred,data$obs)
+    names(f1_val) <- c("F1")
+    f1_val
+}
+
+f1_score <- function(predicted, expected, positive.class="1") {
+    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
+    expected  <- as.factor(expected)
+    cm = as.matrix(table(expected, predicted))
+
+    precision <- diag(cm) / colSums(cm)
+    recall <- diag(cm) / rowSums(cm)
+    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
+
+    #Assuming that F1 is zero when it's not possible compute it
+    f1[is.na(f1)] <- 0
+
+    #Binary F1 or Multi-class macro-averaged F1
+    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
+}
+
+fitControltp53MMRdF1 <- trainControl(method="cv", number = 10,
+                                        seeds = seeds,
+                                        returnResamp = "final",
+                                        search = "grid",
+                                        verboseIter=FALSE,
+                                        allowParallel = TRUE,
+                                        classProbs = T,
+                                        summaryFunction = f1)
+
+fitControltp53MMRdF1$sampling <- "smote" #smote
+```
+
+```{r}
+set.seed(342)
+TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurTraditionaltidymodels,
+                            method="rf",
+                            tuneLength = n_valores,
+                            trControl=fitControltp53MMRdF1,
+                            metric='F1')
+
+TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels
+
+
+#saveRDS(TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels, file = "TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodelsF1.rds")
+
+TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodelsF1.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurTraditionaltidymodels),opt.Datos.Train.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurTraditionaltidymodels),opt.Datos.Train.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurTraditionaltidymodels),opt.Datos.Train.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+```
+
+#### KNN:
+
+```{r}
+knn_grid <- expand.grid(k = seq(3, 21, by = 2)) 
+```
+
+```{r}
+set.seed(123)
+n_valores = 10
+seeds <- vector(mode = "list", length = 11)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+seeds[[11]] <- sample.int(1000, 1)
+
+f1 <- function(data, lev = NULL, model = NULL) {
+    f1_val <- f1_score(data$pred,data$obs)
+    names(f1_val) <- c("F1")
+    f1_val
+}
+
+f1_score <- function(predicted, expected, positive.class="1") {
+    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
+    expected  <- as.factor(expected)
+    cm = as.matrix(table(expected, predicted))
+
+    precision <- diag(cm) / colSums(cm)
+    recall <- diag(cm) / rowSums(cm)
+    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
+
+    #Assuming that F1 is zero when it's not possible compute it
+    f1[is.na(f1)] <- 0
+
+    #Binary F1 or Multi-class macro-averaged F1
+    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
+}
+
+fitControltp53MMRdF1 <- trainControl(method="cv", number = 10,
+                                        seeds = seeds,
+                                        returnResamp = "final",
+                                        search = "grid",
+                                        verboseIter=FALSE,
+                                        allowParallel = TRUE,
+                                        classProbs = T,
+                                        summaryFunction = f1)
+
+fitControltp53MMRdF1$sampling <- "smote" #smote
+```
+
+```{r}
+set.seed(342)
+TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurTraditionaltidymodels,
+                            method="knn",
+                            tuneLength = n_valores,
+                            trControl=fitControltp53MMRdF1,
+                            metric='F1',
+                            tuneGrid = knn_grid)
+
+TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels
+
+#saveRDS(TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels, file = "TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodelsF1.rds")
+
+TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodelsF1.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurTraditionaltidymodels),opt.Datos.Train.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurTraditionaltidymodels),opt.Datos.Train.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurTraditionaltidymodels),opt.Datos.Train.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+```
+
+#### SVM:
+
+```{r}
+set.seed(123)
+n_valores = 10
+seeds <- vector(mode = "list", length = 11)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+seeds[[11]] <- sample.int(1000, 1)
+
+f1 <- function(data, lev = NULL, model = NULL) {
+    f1_val <- f1_score(data$pred,data$obs)
+    names(f1_val) <- c("F1")
+    f1_val
+}
+
+f1_score <- function(predicted, expected, positive.class="1") {
+    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
+    expected  <- as.factor(expected)
+    cm = as.matrix(table(expected, predicted))
+
+    precision <- diag(cm) / colSums(cm)
+    recall <- diag(cm) / rowSums(cm)
+    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
+
+    #Assuming that F1 is zero when it's not possible compute it
+    f1[is.na(f1)] <- 0
+
+    #Binary F1 or Multi-class macro-averaged F1
+    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
+}
+
+svm_grid <- expand.grid(
+  C = 2^(-1:2),
+  sigma = 2^(-2:1)
+)
+n_modelos <- nrow(svm_grid)  # 16 combinaciones
+
+# Semillas reproducibles
+set.seed(123)
+num_folds <- 10 
+seeds <- vector(mode = "list", length = num_folds + 1)
+for (i in 1:num_folds) {
+  seeds[[i]] <- sample.int(1000, n_modelos)
+}
+
+seeds[[num_folds + 1]] <- sample.int(1000, 1)
+
+fitControlF1 <- trainControl(
+  method = "cv",
+  number = 10,
+  seeds = seeds,
+  returnResamp = "final",
+  search = "grid",
+  verboseIter = FALSE,
+  allowParallel = TRUE,
+  classProbs = TRUE,
+  summaryFunction = f1,
+  sampling = "smote"  # Usar SMOTE en cada fold
+)
+```
+
+```{r}
+set.seed(342)
+TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurTraditionaltidymodels,
+                            method="svmRadial",
+                            tuneLength = n_valores,
+                            trControl=fitControlF1  ,
+                            metric='F1',
+                            tuneGrid = svm_grid)
+
+TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels
+
+#saveRDS(TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels, file = "TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodelsF1.rds")
+
+TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodelsF1.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurTraditionaltidymodels),opt.Datos.Train.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurTraditionaltidymodels),opt.Datos.Train.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurTraditionaltidymodels),opt.Datos.Train.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+```
+
+
+
+```{r}
+library(caret)
+library(yardstick)
+library(dplyr)
+library(ggplot2)
+library(tibble)
+library(purrr)
+
+# Paso 1: Hacer predicciones
+
+prediccionesTidymodelsTraditional <- predict(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels)
+
+# Paso 2: Asegurar factores y niveles iguales
+clase_realTidymodelsTraditional <- factor(opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+prediccionesTidymodelsTraditional <- factor(prediccionesTidymodelsTraditional, levels = levels(clase_realTidymodelsTraditional))
+probs_tidymodelsTraditional <- predict(
+  TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,
+  opt.Datos.Test.FinnishRecurTraditionaltidymodels,
+  type = "prob"
+)
+
+# Paso 3: Crear tibble de resultados
+df_resultadosTidymodelsTraditional <- tibble(
+  truth = clase_realTidymodelsTraditional,
+  predicted = factor(prediccionesTidymodelsTraditional,levels = levels(clase_realTidymodelsTraditional))
+) %>%
+  bind_cols(probs_tidymodelsTraditional)
+
+# Paso 4: Extraer clases únicas
+clasesTidymodelsTraditional <- levels(clase_realTidymodelsTraditional)
+
+# Paso 5: Función para calcular métricas por clase (one-vs-rest)
+library(rlang)  
+
+calcular_metricas_por_claseTidymodelsTraditional <- function(clase_objetivo) {
+  df_binarioTraditional <- df_resultadosTidymodelsTraditional %>%
+    mutate(
+      truth_bin = factor(ifelse(truth == clase_objetivo, "Sí", "No"), levels = c("Sí", "No")),
+      pred_bin  = factor(ifelse(predicted == clase_objetivo, "Sí", "No"), levels = c("Sí", "No"))
+    )
+  
+   precision <- yardstick::precision(data = df_binarioTraditional, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  recall    <- yardstick::recall(data = df_binarioTraditional, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  f1        <- yardstick::f_meas(data = df_binarioTraditional, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  Accuracy_specific        <- yardstick::accuracy(data = df_binarioTraditional, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  pr_auc_auc  <- pr_auc(df_binarioTraditional, truth_bin, !!sym(clase_objetivo), event_level = "first")$.estimate
+    
+   tibble(
+    Clase = clase_objetivo,
+    Métrica = c("Precision", "Recall", "F1-score", "Accuracy", "PR AUC"),
+    Valor = c(precision, recall, f1, Accuracy_specific, pr_auc_auc)
+  )
+}
+
+# Paso 6: Aplicar a cada clase
+resultados_por_claseTidymodelsTraditional <- map_dfr(clasesTidymodelsTraditional, calcular_metricas_por_claseTidymodelsTraditional)
+
+# Paso 7: Mostrar tabla con métricas
+print("Métricas por clase:")
+print(resultados_por_claseTidymodelsTraditional)
+
+Clases_Espaciadas <- list(
+  'EarlyRelapse'="Early Relapse",
+  'LateRelpase'="Late Relapse",
+  'NoRelapse'="No Relapse"
+)
+
+Clases_labeller <- function(variable,value){
+  return(Clases_Espaciadas[value])
+}
+
+# Paso 8: Graficar métricas por clase
+PlotMetricasPorClaseTidymodelsTraditional <- ggplot(resultados_por_claseTidymodelsTraditional, aes(x = Métrica, y = Valor, fill = Métrica)) +
+  geom_col(show.legend = FALSE) + scale_fill_manual(values=c("blue", "#00BA38", "orange", "purple", "#F8766D")) + facet_wrap(~Clase, labeller=Clases_labeller) +
+  ylim(0, 1) +
+  labs(
+    title = element_blank(),
+    x = element_blank(),
+    y = "Value"
+  ) +
+  theme_minimal(base_size = 10) + theme(axis.text = element_text(colour = "black"), strip.text.x = element_text(colour = "black", face = "bold", size = 12), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
+
+PlotMetricasPorClaseTidymodelsTraditional
+
+### RUN TOGETHER:
+pdf("PlotMetricasPorClaseTidymodelsTraditional.pdf") 
+# 2. Create a plot
+plot(PlotMetricasPorClaseTidymodelsTraditional)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+
+### RUN TOGETHER:
+png("PlotMetricasPorClaseTidymodelsTraditional.png") 
+# 2. Create a plot
+plot(PlotMetricasPorClaseTidymodelsTraditional)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+PlotMetricasPorClaseTidymodelsTraditional
+
+write.csv(resultados_por_claseTidymodelsTraditional, "MetricsPerClassTraditional.csv")
+```
+
+```{r}
+plot(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels)
+```
+
+```{r}
+library(gbm)
+
+varImp(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, scale = T)
+```
+
+```{r}
+library(kernelshap)
+library(shapviz)
+
+sRFFinnishRecurTraditionaltidymodels <- kernelshap(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, X = opt.Datos.Test.FinnishRecurTraditionaltidymodels[,-23], bg_X = opt.Datos.Test.FinnishRecurTraditionaltidymodels, type = "prob") # if i don't set type= "prob", I run through "Predictions must be numeric".
+
+svFinnishRecurTraditionaltidymodels <- shapviz(sRFFinnishRecurTraditionaltidymodels)
+
+FeatureImportanceTraditionaltidymodels <- sv_importance(svFinnishRecurTraditionaltidymodels, kind = "bar",bar_type = "stack" , max_display = 20) + ylab("Feature") + xlab("Average absolute SHAP values") + theme(axis.text.y = element_text(size = 6),axis.text.x = element_text(size = 6),
+panel.grid = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA))  + scale_y_discrete(labels = c("p53abn","CD171", "Does not smoke", "Hemoglobin", "Age", "ASA Score", "Myometrial invasion","Ca125","Endometrioid G3","Leucocyte","Weakened Ecadherin","BMI","Thrombocyte", "Cytology", "PR","ARID1A","LVSI", "Tumor Size"," Normal Ecadherin",  "Stage I vs II-IV")) + scale_fill_manual(values = c("brown3", "sandybrown", "steelblue1"),labels = c("Late relapse", "Early relapse", "No relapse")) 
+
+FeatureImportanceTraditionaltidymodels
+
+#saveRDS(FeatureImportanceTraditionaltidymodels, "FeatureImportanceTraditionaltidymodels.rds")
+
+#saveRDS(sRFFinnishRecurTraditionaltidymodels, "sRFFinnishRecurTraditionaltidymodelsJuly.rds")
+
+sRFFinnishRecurTraditionaltidymodels <- readRDS("sRFFinnishRecurTraditionaltidymodelsJuly.rds")
+
+FeatureImportanceTraditionaltidymodels <- readRDS("FeatureImportanceTraditionaltidymodels.rds")
+
+### RUN TOGETHER:
+pdf("FeatureImportanceTraditionaltidymodels.pdf") 
+# 2. Create a plot
+plot(FeatureImportanceTraditionaltidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+### RUN TOGETHER:
+png("FeatureImportanceTraditionaltidymodels.png") 
+# 2. Create a plot
+plot(FeatureImportanceTraditionaltidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+FeatureImportanceTraditionaltidymodels
+```
+
+```{r}
+ShapelyGraphicFinnishEarlyRecurTraditionaltidymodels <- sv_importance(svFinnishRecurTraditionaltidymodels$EarlyRelapse, kind = "beeswarm", max_display = 10) + ylab("Feature") + xlab("SHAP value (impact on model output)") + ggtitle("Feature impact for Early relapse") + theme(axis.text.y = element_text(size = 10), plot.title = element_text(size=12),
+panel.grid = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA), text=element_text(color="black"),axis.text=element_text(color="black")) + scale_colour_gradient(
+    low = "blue", high = "red",
+    breaks = c(0, 1), labels = c("Low", "High")) + scale_y_discrete(labels = c("Ca125", "Age","ARID1A","PR", "Normal Ecadherin",  "Myometrial invasion",
+  "Endometrioid G3","Thrombocyte", "Positive cytology", "Stage I vs II-IV"))
+
+ShapelyGraphicFinnishEarlyRecurTraditionaltidymodels
+
+### RUN TOGETHER:
+pdf("ShapelyGraphicFinnishEarlyRecurTraditionaltidymodels.pdf") 
+# 2. Create a plot
+plot(ShapelyGraphicFinnishEarlyRecurTraditionaltidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+
+### RUN TOGETHER:
+png("ShapelyGraphicFinnishEarlyRecurTraditionaltidymodels.png") 
+# 2. Create a plot
+plot(ShapelyGraphicFinnishEarlyRecurTraditionaltidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+ShapelyGraphicFinnishEarlyRecurTraditionaltidymodels
+```
+
+```{r}
+ShapelyGraphicFinnishLateRecurTraditionaltidymodels <- sv_importance(svFinnishRecurTraditionaltidymodels$LateRelpase , kind = "beeswarm", max_display = 10) + ylab("Feature") + xlab("SHAP value (impact on model output)") + ggtitle("Feature impact for Late relapse") + theme(axis.text.y = element_text(size = 10), plot.title = element_text(size=12),
+panel.grid = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA), text=element_text(color="black"),axis.text=element_text(color="black")) + scale_colour_gradient(
+    low = "blue", high = "red",
+    breaks = c(0, 1), labels = c("Low", "High"))+ scale_y_discrete(labels = c("Stage I vs II-IV","Hemoglobin","Leucocyte","ASA Score", "BMI","Endometrioid G3","ARID1A","LVSI", "Tumor size","Normal Ecadherin")) 
+
+ShapelyGraphicFinnishLateRecurTraditionaltidymodels
+
+### RUN TOGETHER:
+pdf("ShapelyGraphicFinnishLateRecurTraditionaltidymodels.pdf") 
+# 2. Create a plot
+plot(ShapelyGraphicFinnishLateRecurTraditionaltidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+
+### RUN TOGETHER:
+png("ShapelyGraphicFinnishLateRecurTraditionaltidymodels.png") 
+# 2. Create a plot
+plot(ShapelyGraphicFinnishLateRecurTraditionaltidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+ShapelyGraphicFinnishLateRecurTraditionaltidymodels
+```
+
+```{r}
+ShapelyGraphicFinnishNoRecurTraditionaltidymodels <- sv_importance(svFinnishRecurTraditionaltidymodels$NoRelapse, kind = "beeswarm", max_display = 10) + ylab("Feature") + xlab("SHAP value (impact on model output)") + ggtitle("Feature impact for no relapse") + theme(axis.text.y = element_text(size = 10), plot.title = element_text(size=12),
+panel.grid = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA), text=element_text(color="black"),axis.text=element_text(color="black")) + scale_colour_gradient(
+    low = "blue", high = "red",
+    breaks = c(0, 1), labels = c("Low", "High")) + scale_y_discrete(labels = c("Ca125", "Positive cytology", "Leucocyte", "Weakened Ecadherin", "PR", "ARID1A", "LVSI", "Tumor size", "Normal Ecadherin", "Stage I vs II-IV"))
+
+
+ShapelyGraphicFinnishNoRecurTraditionaltidymodels
+
+### RUN TOGETHER:
+pdf("ShapelyGraphicFinnishNoRecurTraditionaltidymodels.pdf") 
+# 2. Create a plot
+plot(ShapelyGraphicFinnishNoRecurTraditionaltidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+
+### RUN TOGETHER:
+png("ShapelyGraphicFinnishNoRecurTraditionaltidymodels.png") 
+# 2. Create a plot
+plot(ShapelyGraphicFinnishNoRecurTraditionaltidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+ShapelyGraphicFinnishNoRecurTraditionaltidymodels  ####Tumour size > 25 mm
+```
+
+```{r}
+cm <- confusionMatrix(predict(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+# Convertir a data.frame para ggplot
+cm_table <- as.data.frame(cm$table)
+
+# Crear gráfico de la matriz de confusión
+ConfusionMatrixFigureRelapseRisk <- ggplot(cm_table, aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), color = "coral", size = 4) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +
+  labs(x = element_blank(),y = "Predicted class",
+    fill = "Frequency"
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 10,color="black"),
+    axis.title = element_text(size = 12),
+    legend.position = "right", text=element_text(color="black")
+  ) + scale_x_discrete(labels= c("No relapse", "Early relapse", "Late relapse")) +
+   scale_y_discrete(labels=c("No relapse", "Early relapse", "Late relapse"))
+
+ConfusionMatrixFigureRelapseRisk
+
+### RUN TOGETHER:
+pdf("ConfusionMatrixFigureRelapseRisk.pdf") 
+# 2. Create a plot
+plot(ConfusionMatrixFigureRelapseRisk)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+
+### RUN TOGETHER:
+png("ConfusionMatrixFigureRelapseRisk.png") 
+# 2. Create a plot
+plot(ConfusionMatrixFigureRelapseRisk)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+ConfusionMatrixFigureRelapseRisk
+```
+
+
+### ESGO rfe with tidymodels:
+
+```{r}
+DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrenceTraditionalESGO <- readRDS("DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrenceTraditionalESGO.rds")
+```
+
+```{r}
+# install.packages(c("tidymodels", "vip", "themis"))
+
+library(tidymodels)
+library(vip)
+library(themis)
+
+# ---------------------------
+# Paso 0: Partir los datos
+# ---------------------------
+
+DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrenceTraditionalESGO <- read_csv("DatasetESGORiskOfRecurrence.csv")
+
+recetaESGO <- recipe(Clase ~ ., data =DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrenceTraditionalESGO) %>%
+  step_zv(all_predictors()) %>%    # Eliminates predictors without variation
+  step_normalize(all_numeric_predictors()) %>%    # Standardizes numeric covariates
+  step_dummy(all_nominal_predictors())            # Transforms factor features to dummies
+    
+set.seed(123)
+splitESGO <- initial_split(DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrenceTraditionalESGO, prop = 0.7, strata = Clase)
+datos_trainESGO <- training(splitESGO)
+datos_testValidationESGO  <- testing(splitESGO)
+
+splitESGO2 <- initial_split(datos_testValidationESGO, prop = 0.7, strata = Clase)
+datos_testESGO <- training(splitESGO2)
+datos_ValidationESGO  <- testing(splitESGO2)
+
+# Asegurar que la clase es factor
+datos_trainESGO$Clase <- factor(datos_trainESGO$Clase)
+datos_testESGO$Clase <- factor(datos_testESGO$Clase, levels = levels(datos_trainESGO$Clase))
+
+datos_trainESGO <- datos_trainESGO %>%
+  rename(recurrence_risk = Clase)
+
+datos_testESGO <- datos_testESGO %>%
+  rename(recurrence_risk = Clase)
+
+# ---------------------------
+# Paso 1: Receta base
+# ---------------------------
+receta_baseESGO <- recipe(recurrence_risk ~ ., data = datos_trainESGO) %>%
+  step_zv(all_predictors()) %>%                      # Eliminates predictors without variation
+  step_normalize(all_numeric_predictors()) %>%    # Standardizes numeric covariates
+  step_dummy(all_nominal_predictors())            # Transforms factor features to dummies
+
+# Preprocesar la receta base
+receta_base_preparadaESGO <- prep(receta_baseESGO, training = datos_trainESGO, retain = TRUE)
+
+datos_procesadosESGO <- juice(receta_base_preparadaESGO)
+
+# ---------------------------
+# Paso 3: Obtener importancia de variables (suponiendo que usamos Random Forest)
+# ---------------------------
+modelo_rfESGO <- rand_forest(mode = "classification", trees = 500) %>%
+  set_engine("ranger", importance = "impurity")
+
+modelo_baseESGO <- modelo_rfESGO %>%
+  fit(recurrence_risk ~ ., data = datos_procesadosESGO)
+
+# Entrenar modelo base para obtener importancia
+vip_valsESGO <- modelo_baseESGO %>% vi()
+
+variables_ordenadasESGO <- vip_valsESGO %>%
+  arrange(desc(Importance)) %>%
+  pull(Variable)
+
+# -----------------------
+# 4. Validación cruzada
+# -----------------------
+cv_foldsESGO <- vfold_cv(datos_trainESGO, v = 5, strata = recurrence_risk)
+
+# -----------------------
+# 5. Función para evaluar con top-N variables
+# -----------------------
+evaluar_con_top_nESGO <- function(n) {
+  print(n)
+  n_local <- n
+  top_varsESGO <- variables_ordenadasESGO[1:n_local]
+  top_varsESGO <- union(top_varsESGO, "recurrence_risk")
+  
+  receta_rfeESGO <- recipe(recurrence_risk ~ ., data = datos_trainESGO) %>%
+    step_zv(all_predictors()) %>%
+    step_normalize(all_numeric_predictors()) %>%
+    step_dummy(all_nominal_predictors()) %>%
+    # Truco: ignorar todas las variables menos las top
+    #update_role(all_predictors(), new_role = "ignore") %>%
+    #update_role(all_of(top_vars), new_role = "predictor") %>%
+    step_smote(recurrence_risk) %>%
+    step_select(all_of(top_varsESGO))
+  
+  wfESGO <- workflow() %>%
+    add_model(modelo_rfESGO) %>%
+    add_recipe(receta_rfeESGO) 
+
+  resESGO <- fit_resamples(
+    wfESGO,
+    resamples = cv_foldsESGO,
+    metrics = metric_set(accuracy, f_meas, kap, roc_auc, pr_auc),
+    control = control_resamples(save_pred = TRUE)
+  )
+  
+  collect_metrics(resESGO) %>%
+    mutate(num_vars = n_local)
+}
+
+# -----------------------
+# 6. Ejecutar RFE
+# -----------------------
+top_n_valores <- c(5:30)
+
+resultados_rfeESGO <- map_dfr(top_n_valores, evaluar_con_top_nESGO)
+
+#saveRDS(resultados_rfeESGO, "RFEresultsTP53ESGO.rds")
+#saveRDS(variables_ordenadasESGO, "MoreToleastImportantFeaturesESGO.rds")
+#write.csv(resultados_rfeESGO, "RFEresultsESGO.csv")
+
+# ---------------------------
+# Paso 6: Elegir el mejor conjunto de variables
+# ---------------------------
+mejor_nESGO <- resultados_rfeESGO %>%
+  filter(.metric == "f_meas") %>%
+  arrange(desc(mean)) %>%
+  slice(1) %>%
+  pull(num_vars)
+
+cat("Best number of features according to F1-score:", mejor_nESGO, "\n") #23
+
+# ---------------------------
+# Paso 7: Reentrenar modelo final con ese conjunto
+# ---------------------------
+mejores_varsESGO <- variables_ordenadasESGO[1:23]
+"recurrence_risk" %in% mejores_varsESGO
+
+mejores_varsESGO <- setdiff(mejores_varsESGO, "recurrence_risk")
+
+receta_finalESGO <- recipe(recurrence_risk ~ ., data = datos_trainESGO) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  update_role(recurrence_risk, new_role = "outcome") %>%
+  step_select(all_of(mejores_varsESGO), starts_with("recurrence_risk")) %>%
+  step_smote(recurrence_risk, skip = TRUE)
+
+prep(receta_finalESGO, training = datos_trainESGO) %>% juice() %>% names() %>% any(. == "recurrence_risk")
+
+wf_finalESGO <- workflow() %>%
+  add_model(modelo_rfESGO) %>%
+  add_recipe(receta_finalESGO)
+
+fit_finalESGO <- fit(
+  wf_finalESGO,
+  data = datos_trainESGO)
+
+
+# ---------------------------
+# Paso 8: Evaluar en test
+# ---------------------------
+receta_evalESGO <- receta_finalESGO %>% prep(training = datos_trainESGO, retain = TRUE)
+datos_train_bakeESGO <- bake(receta_evalESGO, new_data = datos_trainESGO)
+datos_test_bakeESGO <- bake(receta_evalESGO, new_data = datos_testESGO)
+
+names(datos_test_bakeESGO)
+
+fit_finalESGO %>% extract_fit_parsnip() %>% .$fit %>% names()
+```
+
+#### Training with GBM:
+
+```{r}
+opt.Datos.Train.FinnishRecurESGOtidymodels <- datos_train_bakeESGO
+
+levels(opt.Datos.Train.FinnishRecurESGOtidymodels$recurrence_risk) <- c("EarlyRelapse", "LateRelpase", "NoRelapse")
+
+opt.Datos.Train.FinnishRecurESGOtidymodels <- droplevels(opt.Datos.Train.FinnishRecurESGOtidymodels)
+
+opt.Datos.Test.FinnishRecurESGOtidymodels <- datos_test_bakeESGO
+
+levels(opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk) <- c("EarlyRelapse", "LateRelpase", "NoRelapse")
+
+opt.Datos.Test.FinnishRecurESGOtidymodels <- droplevels(opt.Datos.Test.FinnishRecurESGOtidymodels)
+
+gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9), 
+                        n.trees = (1:30)*50, 
+                        shrinkage = 0.1,
+                        n.minobsinnode = 20)
+```
+
+```{r}
+set.seed(342)
+ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurESGOtidymodels,
+                            method="gbm",
+                            tuneLength = n_valores,
+                            trControl=fitControltp53MMRdF1,
+                            tuneGrid = gbmGrid,
+                            metric='F1')
+
+ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels
+
+
+#saveRDS(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, file = "ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodelsSeptember.rds")
+
+ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels <- readRDS(file = "ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodelsSeptember.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurESGOtidymodels),opt.Datos.Train.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurESGOtidymodels),opt.Datos.Train.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurESGOtidymodels),opt.Datos.Train.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+```
+
+#### Rf:
+
+```{r}
+set.seed(123)
+n_valores = 10
+seeds <- vector(mode = "list", length = 11)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+seeds[[11]] <- sample.int(1000, 1)
+
+f1 <- function(data, lev = NULL, model = NULL) {
+    f1_val <- f1_score(data$pred,data$obs)
+    names(f1_val) <- c("F1")
+    f1_val
+}
+
+f1_score <- function(predicted, expected, positive.class="1") {
+    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
+    expected  <- as.factor(expected)
+    cm = as.matrix(table(expected, predicted))
+
+    precision <- diag(cm) / colSums(cm)
+    recall <- diag(cm) / rowSums(cm)
+    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
+
+    #Assuming that F1 is zero when it's not possible compute it
+    f1[is.na(f1)] <- 0
+
+    #Binary F1 or Multi-class macro-averaged F1
+    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
+}
+
+fitControltp53MMRdF1 <- trainControl(method="cv", number = 10,
+                                        seeds = seeds,
+                                        returnResamp = "final",
+                                        search = "grid",
+                                        verboseIter=FALSE,
+                                        allowParallel = TRUE,
+                                        classProbs = T,
+                                        summaryFunction = f1)
+
+fitControltp53MMRdF1$sampling <- "smote" #smote
+```
+
+```{r}
+set.seed(342)
+ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurESGOtidymodels,
+                            method="rf",
+                            tuneLength = n_valores,
+                            trControl=fitControltp53MMRdF1,
+                            metric='F1')
+
+ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels
+
+
+#saveRDS(ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels, file = "ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodelsF1.rds")
+
+ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels <- readRDS(file = "ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodelsF1.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurESGOtidymodels),opt.Datos.Train.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurESGOtidymodels),opt.Datos.Train.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurESGOtidymodels),opt.Datos.Train.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+```
+
+
+#### KNN:
+
+```{r}
+knn_grid <- expand.grid(k = seq(3, 21, by = 2)) 
+```
+
+```{r}
+set.seed(123)
+n_valores = 10
+seeds <- vector(mode = "list", length = 11)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+seeds[[11]] <- sample.int(1000, 1)
+
+f1 <- function(data, lev = NULL, model = NULL) {
+    f1_val <- f1_score(data$pred,data$obs)
+    names(f1_val) <- c("F1")
+    f1_val
+}
+
+f1_score <- function(predicted, expected, positive.class="1") {
+    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
+    expected  <- as.factor(expected)
+    cm = as.matrix(table(expected, predicted))
+
+    precision <- diag(cm) / colSums(cm)
+    recall <- diag(cm) / rowSums(cm)
+    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
+
+    #Assuming that F1 is zero when it's not possible compute it
+    f1[is.na(f1)] <- 0
+
+    #Binary F1 or Multi-class macro-averaged F1
+    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
+}
+
+fitControltp53MMRdF1 <- trainControl(method="cv", number = 10,
+                                        seeds = seeds,
+                                        returnResamp = "final",
+                                        search = "grid",
+                                        verboseIter=FALSE,
+                                        allowParallel = TRUE,
+                                        classProbs = T,
+                                        summaryFunction = f1)
+
+fitControltp53MMRdF1$sampling <- "smote" #smote
+```
+
+```{r}
+set.seed(342)
+ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurESGOtidymodels,
+                            method="knn",
+                            tuneLength = n_valores,
+                            trControl=fitControltp53MMRdF1,
+                            metric='F1',
+                            tuneGrid = knn_grid)
+
+ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels
+
+#saveRDS(ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels, file = "ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodelsF1.rds")
+
+ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- readRDS(file = "ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodelsF1.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurESGOtidymodels),opt.Datos.Train.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurESGOtidymodels),opt.Datos.Train.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurESGOtidymodels),opt.Datos.Train.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+```
+
+#### SVM:
+
+```{r}
+set.seed(123)
+n_valores = 10
+seeds <- vector(mode = "list", length = 11)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+seeds[[11]] <- sample.int(1000, 1)
+
+f1 <- function(data, lev = NULL, model = NULL) {
+    f1_val <- f1_score(data$pred,data$obs)
+    names(f1_val) <- c("F1")
+    f1_val
+}
+
+f1_score <- function(predicted, expected, positive.class="1") {
+    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
+    expected  <- as.factor(expected)
+    cm = as.matrix(table(expected, predicted))
+
+    precision <- diag(cm) / colSums(cm)
+    recall <- diag(cm) / rowSums(cm)
+    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
+
+    #Assuming that F1 is zero when it's not possible compute it
+    f1[is.na(f1)] <- 0
+
+    #Binary F1 or Multi-class macro-averaged F1
+    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
+}
+
+svm_grid <- expand.grid(
+  C = 2^(-1:2),
+  sigma = 2^(-2:1)
+)
+n_modelos <- nrow(svm_grid)  # 16 combinaciones
+
+# Semillas reproducibles
+set.seed(123)
+num_folds <- 10 
+seeds <- vector(mode = "list", length = num_folds + 1)
+for (i in 1:num_folds) {
+  seeds[[i]] <- sample.int(1000, n_modelos)
+}
+
+seeds[[num_folds + 1]] <- sample.int(1000, 1)
+
+fitControlF1 <- trainControl(
+  method = "cv",
+  number = 10,
+  seeds = seeds,
+  returnResamp = "final",
+  search = "grid",
+  verboseIter = FALSE,
+  allowParallel = TRUE,
+  classProbs = TRUE,
+  summaryFunction = f1,
+  sampling = "smote"  # Usar SMOTE en cada fold
+)
+```
+
+```{r}
+set.seed(342)
+ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurESGOtidymodels,
+                            method="svmRadial",
+                            tuneLength = n_valores,
+                            trControl=fitControlF1  ,
+                            metric='F1',
+                            tuneGrid = svm_grid)
+
+ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels
+
+#saveRDS(ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels, file = "ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodelsF1.rds")
+
+ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels <- readRDS(file = "ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodelsF1.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurESGOtidymodels),opt.Datos.Train.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurESGOtidymodels),opt.Datos.Train.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurESGOtidymodels),opt.Datos.Train.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+```
+
+
+
+```{r}
+library(caret)
+library(yardstick)
+library(dplyr)
+library(ggplot2)
+library(tibble)
+library(purrr)
+
+# Paso 1: Hacer predicciones
+
+prediccionesTidymodelsESGO <- predict(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels)
+
+# Paso 2: Asegurar factores y niveles iguales
+clase_realTidymodelsESGO <- factor(opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+prediccionesTidymodelsESGO <- factor(prediccionesTidymodelsESGO, levels = levels(clase_realTidymodelsESGO))
+probs_tidymodelsESGO <- predict(
+  ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,
+  opt.Datos.Test.FinnishRecurESGOtidymodels,
+  type = "prob"
+)
+
+# Paso 3: Crear tibble de resultados
+df_resultadosTidymodelsESGO <- tibble(
+  truth = clase_realTidymodelsESGO,
+  predicted = factor(prediccionesTidymodelsESGO,levels = levels(clase_realTidymodelsESGO))
+) %>%
+  bind_cols(probs_tidymodelsESGO)
+
+# Paso 4: Extraer clases únicas
+clasesTidymodelsESGO <- levels(clase_realTidymodelsESGO)
+
+# Paso 5: Función para calcular métricas por clase (one-vs-rest)
+library(rlang)  
+
+calcular_metricas_por_claseTidymodelsESGO <- function(clase_objetivo) {
+  df_binarioESGO <- df_resultadosTidymodelsESGO %>%
+    mutate(
+      truth_bin = factor(ifelse(truth == clase_objetivo, "Sí", "No"), levels = c("Sí", "No")),
+      pred_bin  = factor(ifelse(predicted == clase_objetivo, "Sí", "No"), levels = c("Sí", "No"))
+      )
+  
+   precision <- yardstick::precision(data = df_binarioESGO, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  recall    <- yardstick::recall(data = df_binarioESGO, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  f1        <- yardstick::f_meas(data = df_binarioESGO, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  Accuracy_specific        <- yardstick::accuracy(data = df_binarioESGO, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  pr_auc_auc  <- pr_auc(df_binarioESGO, truth_bin, !!sym(clase_objetivo), event_level = "first")$.estimate
+    
+   tibble(
+    Clase = clase_objetivo,
+    Métrica = c("Precision", "Recall", "F1-score", "Accuracy", "PR AUC"),
+    Valor = c(precision, recall, f1, Accuracy_specific, pr_auc_auc)
+  )
+}
+
+# Paso 6: Aplicar a cada clase
+resultados_por_claseTidymodelsESGO <- map_dfr(clasesTidymodelsESGO, calcular_metricas_por_claseTidymodelsESGO)
+
+# Paso 7: Mostrar tabla con métricas
+print("Métricas por clase:")
+print(resultados_por_claseTidymodelsESGO)
+
+Clases_Espaciadas <- list(
+  'EarlyRelapse'="Early Relapse",
+  'LateRelpase'="Late Relapse",
+  'NoRelapse'="No Relapse"
+)
+
+Clases_labeller <- function(variable,value){
+  return(Clases_Espaciadas[value])
+}
+
+# Paso 8: Graficar métricas por clase
+PlotMetricasPorClaseTidymodelsESGO <- ggplot(resultados_por_claseTidymodelsESGO, aes(x = Métrica, y = Valor, fill = Métrica)) +
+  geom_col(show.legend = FALSE) + scale_fill_manual(values=c("blue", "#00BA38", "orange", "purple", "#F8766D")) + facet_wrap(~Clase, labeller=Clases_labeller) +
+  ylim(0, 1) +
+  labs(
+    title = "Metrics per class",
+    x = "Metric",
+    y = "Value"
+  ) +
+  theme_minimal(base_size = 8)
+
+PlotMetricasPorClaseTidymodelsESGO
+
+### RUN TOGETHER:
+pdf("PlotMetricasPorClaseTidymodelsESGO.pdf") 
+# 2. Create a plot
+plot(PlotMetricasPorClaseTidymodelsESGO)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+
+### RUN TOGETHER:
+png("PlotMetricasPorClaseTidymodelsESGO.png") 
+# 2. Create a plot
+plot(PlotMetricasPorClaseTidymodelsESGO)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+PlotMetricasPorClaseTidymodelsESGO
+```
+
+```{r}
+plot(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels)
+```
+
+```{r}
+library(gbm)
+
+varImp(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, scale = T)
+```
+
+```{r}
+ImportanciaFinnishRecurESGOTidymodels <- varImp(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, scale = FALSE)
+
+ImportanciaFinnishRecurESGOTidymodels <- ImportanciaFinnishRecurESGOTidymodels$importance
+
+ImportanciaFinnishRecurESGOTidymodels <- cbind(ImportanciaFinnishRecurESGOTidymodels, row.names(ImportanciaFinnishRecurESGOTidymodels))
+```
+
+```{r}
+ImportanciaFinnishRecurESGOTidymodelsOrdenada <- ImportanciaFinnishRecurESGOTidymodels[order(ImportanciaFinnishRecurESGOTidymodels$Overall, decreasing = TRUE),]
+```
+
+### POLE rfe with tidymodels:
+
+```{r}
+library(readr)
+library(randomForest)
+DataframeSinNasPOLE <- read_csv("DatasetPOLERiskOfRecurrence.csv")
+
+DataframeSinNasPOLE <- as.data.frame(DataframeSinNasPOLE)
+
+DataframeSinNasPOLEImputed <- DataframeSinNasPOLE
+
+DataframeSinNasPOLEImputed <- DataframeSinNasPOLEImputed %>%
+  mutate(across(where(is.character), as.factor))
+
+DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrencePOLE <- as.data.frame(DataframeSinNasPOLEImputed)
+
+levels(DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrencePOLE$`Recurrence risk`) <- c("NoRelapse", "EarlyRelapse","LateRelapse")
+
+DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrencePOLE <- droplevels(DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrencePOLE)
+```
+
+```{r}
+# install.packages(c("tidymodels", "vip", "themis"))
+
+library(tidymodels)
+library(vip)
+library(themis)
+
+# ---------------------------
+# Paso 0: Partir los datos
+# ---------------------------
+
+recetaPOLE <- recipe(`Recurrence risk` ~ ., data =DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrencePOLE) %>%
+  step_zv(all_predictors()) %>%    # Eliminates predictors without variation
+  step_normalize(all_numeric_predictors()) %>%    # Standardizes numeric covariates
+  step_dummy(all_nominal_predictors())            # Transforms factor features to dummies
+    
+set.seed(123)
+splitPOLE <- initial_split(DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrencePOLE, prop = 0.7, strata = `Recurrence risk`)
+datos_trainPOLE <- training(splitPOLE)
+datos_testValidationPOLE  <- testing(splitPOLE)
+
+splitPOLE2 <- initial_split(datos_testValidationPOLE, prop = 0.7, strata = `Recurrence risk`)
+datos_testPOLE <- training(splitPOLE2)
+datos_ValidationPOLE  <- testing(splitPOLE2)
+
+# Asegurar que la clase es factor
+datos_trainPOLE$`Recurrence risk` <- factor(datos_trainPOLE$`Recurrence risk`)
+datos_testPOLE$`Recurrence risk` <- factor(datos_testPOLE$`Recurrence risk`, levels = levels(datos_trainPOLE$`Recurrence risk`))
+
+datos_trainPOLE <- datos_trainPOLE %>%
+  rename(recurrence_risk = `Recurrence risk`)
+
+datos_testPOLE <- datos_testPOLE %>%
+  rename(recurrence_risk = `Recurrence risk`)
+
+# ---------------------------
+# Paso 1: Receta base
+# ---------------------------
+receta_basePOLE <- recipe(recurrence_risk ~ ., data = datos_trainPOLE) %>%
+  step_zv(all_predictors()) %>%                      # Eliminates predictors without variation
+  step_normalize(all_numeric_predictors()) %>%    # Standardizes numeric covariates
+  step_dummy(all_nominal_predictors())            # Transforms factor features to dummies
+
+# Preprocesar la receta base
+receta_base_preparadaPOLE <- prep(receta_basePOLE, training = datos_trainPOLE, retain = TRUE)
+
+datos_procesadosPOLE <- juice(receta_base_preparadaPOLE)
+
+# ---------------------------
+# Paso 3: Obtener importancia de variables (suponiendo que usamos Random Forest)
+# ---------------------------
+modelo_rfPOLE <- rand_forest(mode = "classification", trees = 500) %>%
+  set_engine("ranger", importance = "impurity")
+
+modelo_basePOLE <- modelo_rfPOLE %>%
+  fit(recurrence_risk ~ ., data = datos_procesadosPOLE)
+
+# Entrenar modelo base para obtener importancia
+vip_valsPOLE <- modelo_basePOLE %>% vi()
+
+variables_ordenadasPOLE <- vip_valsPOLE %>%
+  arrange(desc(Importance)) %>%
+  pull(Variable)
+
+# -----------------------
+# 4. Validación cruzada
+# -----------------------
+cv_foldsPOLE <- vfold_cv(datos_trainPOLE, v = 5, strata = recurrence_risk)
+
+# -----------------------
+# 5. Función para evaluar con top-N variables
+# -----------------------
+
+set.seed(345)
+evaluar_con_top_nPOLE <- function(n) {
+  print(n)
+  n_local <- n
+  top_varsPOLE <- variables_ordenadasPOLE[1:n_local]
+  top_varsPOLE <- union(top_varsPOLE, "recurrence_risk")
+  
+  receta_rfePOLE <- recipe(recurrence_risk ~ ., data = datos_trainPOLE) %>%
+    step_zv(all_predictors()) %>%
+    step_normalize(all_numeric_predictors()) %>%
+    step_dummy(all_nominal_predictors()) %>%
+    # Truco: ignorar todas las variables menos las top
+    #update_role(all_predictors(), new_role = "ignore") %>%
+    #update_role(all_of(top_vars), new_role = "predictor") %>%
+    step_smote(recurrence_risk) %>%
+    step_select(all_of(top_varsPOLE))
+  
+  wfPOLE <- workflow() %>%
+    add_model(modelo_rfPOLE) %>%
+    add_recipe(receta_rfePOLE) 
+
+  resPOLE <- fit_resamples(
+    wfPOLE,
+    resamples = cv_foldsPOLE,
+    metrics = metric_set(accuracy, f_meas, kap, roc_auc, pr_auc),
+    control = control_resamples(save_pred = TRUE)
+  )
+  
+  collect_metrics(resPOLE) %>%
+    mutate(num_vars = n_local)
+}
+
+# -----------------------
+# 6. Ejecutar RFE
+# -----------------------
+top_n_valores <- c(5:35)
+
+resultados_rfePOLE <- map_dfr(top_n_valores, evaluar_con_top_nPOLE)
+
+#saveRDS(resultados_rfePOLE, "RFEresultsTP53POLE.rds")
+#saveRDS(variables_ordenadasPOLE, "MoreToleastImportantFeaturesPOLE.rds")
+#write.csv(resultados_rfePOLE, "RFEresultsPOLE.csv")
+
+# ---------------------------
+# Paso 6: Elegir el mejor conjunto de variables
+# ---------------------------
+mejor_nPOLE <- resultados_rfePOLE %>%
+  filter(.metric == "f_meas") %>%
+  arrange(desc(mean)) %>%
+  slice(1) %>%
+  pull(num_vars)
+
+cat("Best number of features according to F1-score:", mejor_nPOLE, "\n") #28
+
+# ---------------------------
+# Paso 7: Reentrenar modelo final con ese conjunto
+# ---------------------------
+mejores_varsPOLE <- variables_ordenadasPOLE[1:28]
+"recurrence_risk" %in% mejores_varsPOLE
+
+mejores_varsPOLE <- setdiff(mejores_varsPOLE, "recurrence_risk")
+
+receta_finalPOLE <- recipe(recurrence_risk ~ ., data = datos_trainPOLE) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  update_role(recurrence_risk, new_role = "outcome") %>%
+  step_select(all_of(mejores_varsPOLE), starts_with("recurrence_risk")) %>%
+  step_smote(recurrence_risk, skip = TRUE)
+
+prep(receta_finalPOLE, training = datos_trainPOLE) %>% juice() %>% names() %>% any(. == "recurrence_risk")
+
+wf_finalPOLE <- workflow() %>%
+  add_model(modelo_rfPOLE) %>%
+  add_recipe(receta_finalPOLE)
+
+fit_finalPOLE <- fit(
+  wf_finalPOLE,
+  data = datos_trainPOLE)
+
+
+# ---------------------------
+# Paso 8: Evaluar en test
+# ---------------------------
+receta_evalPOLE <- receta_finalPOLE %>% prep(training = datos_trainPOLE, retain = TRUE)
+datos_train_bakePOLE <- bake(receta_evalPOLE, new_data = datos_trainPOLE)
+datos_test_bakePOLE <- bake(receta_evalPOLE, new_data = datos_testPOLE)
+
+names(datos_test_bakePOLE)
+
+fit_finalPOLE %>% extract_fit_parsnip() %>% .$fit %>% names()
+```
+
+#### Training with GBM:
+
+```{r}
+opt.Datos.Train.FinnishRecurPOLEtidymodels <- datos_train_bakePOLE
+
+levels(opt.Datos.Train.FinnishRecurPOLEtidymodels$recurrence_risk) <- c("NoRelapse","EarlyRelapse", "LateRelpase")
+
+opt.Datos.Train.FinnishRecurPOLEtidymodels <- droplevels(opt.Datos.Train.FinnishRecurPOLEtidymodels)
+
+opt.Datos.Test.FinnishRecurPOLEtidymodels <- datos_test_bakePOLE
+
+levels(opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk) <- c("NoRelapse","EarlyRelapse", "LateRelpase")
+
+opt.Datos.Test.FinnishRecurPOLEtidymodels <- droplevels(opt.Datos.Test.FinnishRecurPOLEtidymodels)
+
+gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9), 
+                        n.trees = (1:30)*50, 
+                        shrinkage = 0.1,
+                        n.minobsinnode = 20)
+```
+
+```{r}
+set.seed(342)
+POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurPOLEtidymodels,
+                            method="gbm",
+                            tuneLength = n_valores,
+                            trControl=fitControltp53MMRdF1,
+                            tuneGrid = gbmGrid,
+                            metric='F1')
+
+POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels
+
+#saveRDS(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, file = "POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodelsSeptember.rds")
+
+POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels <- readRDS(file = "POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodelsSeptember.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurPOLEtidymodels),opt.Datos.Train.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurPOLEtidymodels),opt.Datos.Train.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurPOLEtidymodels),opt.Datos.Train.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+```
+
+#### Rf:
+
+```{r}
+set.seed(123)
+n_valores = 10
+seeds <- vector(mode = "list", length = 11)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+seeds[[11]] <- sample.int(1000, 1)
+
+f1 <- function(data, lev = NULL, model = NULL) {
+    f1_val <- f1_score(data$pred,data$obs)
+    names(f1_val) <- c("F1")
+    f1_val
+}
+
+f1_score <- function(predicted, expected, positive.class="1") {
+    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
+    expected  <- as.factor(expected)
+    cm = as.matrix(table(expected, predicted))
+
+    precision <- diag(cm) / colSums(cm)
+    recall <- diag(cm) / rowSums(cm)
+    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
+
+    #Assuming that F1 is zero when it's not possible compute it
+    f1[is.na(f1)] <- 0
+
+    #Binary F1 or Multi-class macro-averaged F1
+    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
+}
+
+fitControltp53MMRdF1 <- trainControl(method="cv", number = 10,
+                                        seeds = seeds,
+                                        returnResamp = "final",
+                                        search = "grid",
+                                        verboseIter=FALSE,
+                                        allowParallel = TRUE,
+                                        classProbs = T,
+                                        summaryFunction = f1)
+
+fitControltp53MMRdF1$sampling <- "smote" #smote
+```
+
+```{r}
+set.seed(342)
+POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurPOLEtidymodels,
+                            method="rf",
+                            tuneLength = n_valores,
+                            trControl=fitControltp53MMRdF1,
+                            metric='F1')
+
+POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels
+
+#saveRDS(POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels, file = "POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodelsF1.rds")
+
+POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels <- readRDS(file = "POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodelsF1.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurPOLEtidymodels),opt.Datos.Train.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurPOLEtidymodels),opt.Datos.Train.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurPOLEtidymodels),opt.Datos.Train.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+```
+
+
+
+#### KNN:
+
+```{r}
+knn_grid <- expand.grid(k = seq(3, 21, by = 2)) 
+```
+
+```{r}
+set.seed(123)
+n_valores = 10
+seeds <- vector(mode = "list", length = 11)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+seeds[[11]] <- sample.int(1000, 1)
+
+f1 <- function(data, lev = NULL, model = NULL) {
+    f1_val <- f1_score(data$pred,data$obs)
+    names(f1_val) <- c("F1")
+    f1_val
+}
+
+f1_score <- function(predicted, expected, positive.class="1") {
+    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
+    expected  <- as.factor(expected)
+    cm = as.matrix(table(expected, predicted))
+
+    precision <- diag(cm) / colSums(cm)
+    recall <- diag(cm) / rowSums(cm)
+    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
+
+    #Assuming that F1 is zero when it's not possible compute it
+    f1[is.na(f1)] <- 0
+
+    #Binary F1 or Multi-class macro-averaged F1
+    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
+}
+
+fitControltp53MMRdF1 <- trainControl(method="cv", number = 10,
+                                        seeds = seeds,
+                                        returnResamp = "final",
+                                        search = "grid",
+                                        verboseIter=FALSE,
+                                        allowParallel = TRUE,
+                                        classProbs = T,
+                                        summaryFunction = f1)
+
+fitControltp53MMRdF1$sampling <- "smote" #smote
+```
+
+```{r}
+set.seed(342)
+POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurPOLEtidymodels,
+                            method="knn",
+                            tuneLength = n_valores,
+                            trControl=fitControltp53MMRdF1,
+                            metric='F1',
+                            tuneGrid = knn_grid)
+
+POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels
+
+#saveRDS(POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels, file = "POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodelsF1.rds")
+
+POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- readRDS(file = "POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodelsF1.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurPOLEtidymodels),opt.Datos.Train.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurPOLEtidymodels),opt.Datos.Train.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurPOLEtidymodels),opt.Datos.Train.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+```
+
+#### SVM:
+
+```{r}
+set.seed(123)
+n_valores = 10
+seeds <- vector(mode = "list", length = 11)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+seeds[[11]] <- sample.int(1000, 1)
+
+f1 <- function(data, lev = NULL, model = NULL) {
+    f1_val <- f1_score(data$pred,data$obs)
+    names(f1_val) <- c("F1")
+    f1_val
+}
+
+f1_score <- function(predicted, expected, positive.class="1") {
+    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
+    expected  <- as.factor(expected)
+    cm = as.matrix(table(expected, predicted))
+
+    precision <- diag(cm) / colSums(cm)
+    recall <- diag(cm) / rowSums(cm)
+    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
+
+    #Assuming that F1 is zero when it's not possible compute it
+    f1[is.na(f1)] <- 0
+
+    #Binary F1 or Multi-class macro-averaged F1
+    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
+}
+
+svm_grid <- expand.grid(
+  C = 2^(-1:2),
+  sigma = 2^(-2:1)
+)
+n_modelos <- nrow(svm_grid)  # 16 combinaciones
+
+# Semillas reproducibles
+set.seed(123)
+num_folds <- 10 
+seeds <- vector(mode = "list", length = num_folds + 1)
+for (i in 1:num_folds) {
+  seeds[[i]] <- sample.int(1000, n_modelos)
+}
+
+seeds[[num_folds + 1]] <- sample.int(1000, 1)
+
+fitControlF1 <- trainControl(
+  method = "cv",
+  number = 10,
+  seeds = seeds,
+  returnResamp = "final",
+  search = "grid",
+  verboseIter = FALSE,
+  allowParallel = TRUE,
+  classProbs = TRUE,
+  summaryFunction = f1,
+  sampling = "smote"  # Usar SMOTE en cada fold
+)
+```
+
+```{r}
+set.seed(342)
+POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurPOLEtidymodels,
+                            method="svmRadial",
+                            tuneLength = n_valores,
+                            trControl=fitControlF1  ,
+                            metric='F1',
+                            tuneGrid = svm_grid)
+
+POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels
+
+#saveRDS(POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels, file = "POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodelsF1.rds")
+
+POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels <- readRDS(file = "POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodelsF1.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurPOLEtidymodels),opt.Datos.Train.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurPOLEtidymodels),opt.Datos.Train.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Train.FinnishRecurPOLEtidymodels),opt.Datos.Train.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::Accuracy(predict(POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+MLmetrics::F1_Score(predict(POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+```
+
+```{r}
+POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels
+```
+
+```{r}
+library(caret)
+library(yardstick)
+library(dplyr)
+library(ggplot2)
+library(tibble)
+library(purrr)
+
+# Paso 1: Hacer predicciones
+
+prediccionesTidymodelsRiskPOLE <- predict(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels)
+
+# Paso 2: Asegurar factores y niveles iguales
+clase_realTidymodelsPOLE <- factor(opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+prediccionesTidymodelsRiskPOLE <- factor(prediccionesTidymodelsRiskPOLE, levels = levels(clase_realTidymodelsPOLE))
+probs_tidymodelsPOLE <- predict(
+  POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,
+  opt.Datos.Test.FinnishRecurPOLEtidymodels,
+  type = "prob"
+)
+
+# Paso 3: Crear tibble de resultados
+df_resultadosTidymodelsPOLE <- tibble(
+  truth = clase_realTidymodelsPOLE,
+  predicted = factor(prediccionesTidymodelsRiskPOLE,levels = levels(clase_realTidymodelsPOLE))
+) %>%
+  bind_cols(probs_tidymodelsPOLE)
+
+# Paso 4: Extraer clases únicas
+clasesTidymodelsPOLE <- levels(clase_realTidymodelsPOLE)
+
+# Paso 5: Función para calcular métricas por clase (one-vs-rest)
+library(rlang)  
+
+calcular_metricas_por_claseTidymodelsPOLE <- function(clase_objetivo) {
+  df_binarioPOLE <- df_resultadosTidymodelsPOLE %>%
+    mutate(
+      truth_bin = factor(ifelse(truth == clase_objetivo, "Sí", "No"), levels = c("Sí", "No")),
+      pred_bin  = factor(ifelse(predicted == clase_objetivo, "Sí", "No"), levels = c("Sí", "No"))
+    )
+  
+   precision <- yardstick::precision(data = df_binarioPOLE, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  recall    <- yardstick::recall(data = df_binarioPOLE, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  f1        <- yardstick::f_meas(data = df_binarioPOLE, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  Accuracy_specific        <- yardstick::accuracy(data = df_binarioPOLE, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  pr_auc_auc  <- pr_auc(df_binarioPOLE, truth_bin, !!sym(clase_objetivo), event_level = "first")$.estimate
+    
+   tibble(
+    Clase = clase_objetivo,
+    Métrica = c("Precision", "Recall", "F1-score", "Accuracy", "PR AUC"),
+    Valor = c(precision, recall, f1, Accuracy_specific, pr_auc_auc)
+  )
+}
+
+# Paso 6: Aplicar a cada clase
+resultados_por_claseTidymodelsPOLE <- map_dfr(clasesTidymodelsPOLE, calcular_metricas_por_claseTidymodelsPOLE)
+
+# Paso 7: Mostrar tabla con métricas
+print("Métricas por clase:")
+print(resultados_por_claseTidymodelsPOLE)
+
+Clases_Espaciadas <- list(
+  'EarlyRelapse'="Early Relapse",
+  'LateRelpase'="Late Relapse",
+  'NoRelapse'="No Relapse"
+)
+
+Clases_labeller <- function(variable,value){
+  return(Clases_Espaciadas[value])
+}
+
+# Paso 8: Graficar métricas por clase
+PlotMetricasPorClaseTidymodelsPOLE <- ggplot(resultados_por_claseTidymodelsPOLE, aes(x = Métrica, y = Valor, fill = Métrica)) +
+  geom_col(show.legend = FALSE) + scale_fill_manual(values=c("blue", "#00BA38", "orange", "purple", "#F8766D")) + facet_wrap(~Clase, labeller=Clases_labeller) +
+  ylim(0, 1) +
+  labs(
+    title = element_blank(),
+    x = element_blank(),
+    y = "Value"
+  ) +
+  theme_minimal(base_size = 10) + theme(axis.text = element_text(colour = "black"), strip.text.x = element_text(colour = "black", face = "bold", size = 12), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
+
+PlotMetricasPorClaseTidymodelsPOLE
+
+### RUN TOGETHER:
+pdf("PlotMetricasPorClaseTidymodelsPOLE.pdf") 
+# 2. Create a plot
+plot(PlotMetricasPorClaseTidymodelsPOLE)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+
+### RUN TOGETHER:
+png("PlotMetricasPorClaseTidymodelsPOLE.png") 
+# 2. Create a plot
+plot(PlotMetricasPorClaseTidymodelsPOLE)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+PlotMetricasPorClaseTidymodelsPOLE
+
+write.csv(resultados_por_claseTidymodelsPOLE, "MetricsPerClassPOLE.csv")
+```
+
+```{r}
+plot(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels)
+```
+
+```{r}
+library(gbm)
+
+varImp(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, scale = T)
+```
+
+```{r}
+ImportanciaFinnishRecurPOLETidymodels <- varImp(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, scale = FALSE)
+
+ImportanciaFinnishRecurPOLETidymodels <- ImportanciaFinnishRecurPOLETidymodels$importance
+
+ImportanciaFinnishRecurPOLETidymodels <- cbind(ImportanciaFinnishRecurPOLETidymodels, row.names(ImportanciaFinnishRecurPOLETidymodels))
+```
+
+```{r}
+ImportanciaFinnishRecurPOLETidymodelsOrdenada <- ImportanciaFinnishRecurPOLETidymodels[order(ImportanciaFinnishRecurPOLETidymodels$Overall, decreasing = TRUE),]
+```
+
+```{r}
+library(kernelshap)
+library(shapviz)
+
+sRFFinnishRecurPOLEtidymodels <- kernelshap(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, X = opt.Datos.Test.FinnishRecurPOLEtidymodels[,-29], bg_X = opt.Datos.Test.FinnishRecurPOLEtidymodels, type = "prob") # if i don't set type= "prob", I run through "Predictions must be numeric".
+
+svFinnishRecurPOLEtidymodels <- shapviz(sRFFinnishRecurPOLEtidymodels)
+
+FeatureImportancePOLEtidymodels <- sv_importance(svFinnishRecurPOLEtidymodels, kind = "bar",bar_type = "stack" , max_display = 20) + ylab("Feature") + xlab("Average absolute SHAP values") + theme(axis.text.y = element_text(size = 6),axis.text.x = element_text(size = 6),
+panel.grid = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA))  + scale_y_discrete(labels = c("PDL1", "Does not smoke", "BMI", "Non endometrioid", "ASA Score", "Hemoglobin", "Diabetic" ,"Ca125", "Age",  "ARID1A", "Weakened Ecadherin", "Myometrial invasion", "LVSI", "Leucocyte", "Thrombocyte", "PR", "Positive cytology", "Normal Ecadherin", "Tumor Size", "Stage I vs II-IV")) + scale_fill_manual(values = c("brown3", "sandybrown", "steelblue1"),labels = c("Late relapse", "Early relapse", "No relapse")) 
+
+FeatureImportancePOLEtidymodels
+
+#saveRDS(FeatureImportancePOLEtidymodels, "FeatureImportancePOLEtidymodels.rds")
+
+#saveRDS(sRFFinnishRecurPOLEtidymodels, "sRFFinnishRecurPOLEtidymodelsSeptember.rds")
+
+sRFFinnishRecurPOLEtidymodels <- readRDS("sRFFinnishRecurPOLEtidymodelsSeptember.rds")
+
+FeatureImportancePOLEtidymodels <- readRDS("FeatureImportancePOLEtidymodels.rds")
+
+### RUN TOGETHER:
+pdf("FeatureImportancePOLEtidymodels.pdf") 
+# 2. Create a plot
+plot(FeatureImportancePOLEtidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+
+### RUN TOGETHER:
+png("FeatureImportancePOLEtidymodels.png") 
+# 2. Create a plot
+plot(FeatureImportancePOLEtidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+FeatureImportancePOLEtidymodels
+```
+
+```{r}
+ShapelyGraphicFinnishEarlyRecurPOLEtidymodels <- sv_importance(svFinnishRecurPOLEtidymodels$EarlyRelapse, kind = "beeswarm", max_display = 10) + ylab("Feature") + xlab("SHAP value (impact on model output)") + ggtitle("Feature impact for Early relapse") + theme(axis.text.y = element_text(size = 10), plot.title = element_text(size=12),
+panel.grid = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA), text=element_text(color="black"),axis.text=element_text(color="black")) + scale_colour_gradient(
+    low = "blue", high = "red",
+    breaks = c(0, 1), labels = c("Low", "High")) + scale_y_discrete(labels = c( "PR", "Tumor size","Leucocyte", "Non endometrioid", "Myometrial invasion", "Ca125", "Weakened Ecadherin", "Thrombocyte", "Positive cytology", "Stage I vs II-IV"))
+
+ShapelyGraphicFinnishEarlyRecurPOLEtidymodels
+
+### RUN TOGETHER:
+pdf("ShapelyGraphicFinnishEarlyRecurPOLEtidymodels.pdf") 
+# 2. Create a plot
+plot(ShapelyGraphicFinnishEarlyRecurPOLEtidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+
+### RUN TOGETHER:
+png("ShapelyGraphicFinnishEarlyRecurPOLEtidymodels.png") 
+# 2. Create a plot
+plot(ShapelyGraphicFinnishEarlyRecurPOLEtidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+ShapelyGraphicFinnishEarlyRecurPOLEtidymodels
+```
+
+```{r}
+ShapelyGraphicFinnishLateRecurPOLEtidymodels <- sv_importance(svFinnishRecurPOLEtidymodels$LateRelpase , kind = "beeswarm", max_display = 10) + ylab("Feature") + xlab("SHAP value (impact on model output)") + ggtitle("Feature impact for Late relapse") + theme(axis.text.y = element_text(size = 10), plot.title = element_text(size=12),
+panel.grid = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA), text=element_text(color="black"),axis.text=element_text(color="black")) + scale_colour_gradient(
+    low = "blue", high = "red",
+    breaks = c(0, 1), labels = c("Low", "High"))+ scale_y_discrete(labels = c("ASA Score","ARID1A","Leucocyte","Hemoglobin","Age","Thrombocye","PR","LVSI", "Tumor size","Normal Ecadherin")) 
+
+ShapelyGraphicFinnishLateRecurPOLEtidymodels
+
+### RUN TOGETHER:
+pdf("ShapelyGraphicFinnishLateRecurPOLEtidymodels.pdf") 
+# 2. Create a plot
+plot(ShapelyGraphicFinnishLateRecurPOLEtidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+
+### RUN TOGETHER:
+png("ShapelyGraphicFinnishLateRecurPOLEtidymodels.png") 
+# 2. Create a plot
+plot(ShapelyGraphicFinnishLateRecurPOLEtidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+ShapelyGraphicFinnishLateRecurPOLEtidymodels
+```
+
+```{r}
+ShapelyGraphicFinnishNoRecurPOLEtidymodels <- sv_importance(svFinnishRecurPOLEtidymodels$NoRelapse, kind = "beeswarm", max_display = 10) + ylab("Feature") + xlab("SHAP value (impact on model output)") + ggtitle("Feature impact for no relapse") + theme(axis.text.y = element_text(size = 10), plot.title = element_text(size=12),
+panel.grid = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA), text=element_text(color="black"),axis.text=element_text(color="black")) + scale_colour_gradient(
+    low = "blue", high = "red",
+    breaks = c(0, 1), labels = c("Low", "High")) + scale_y_discrete(labels = c("Thrombocyte", "Myometrial invasion",  "ARID1A", "LVSI", "Leucocyte", "PR", "Positive cytology","Normal Ecadherin", "Tumor size", "Stage I vs II-IV"))
+
+
+ShapelyGraphicFinnishNoRecurPOLEtidymodels
+
+### RUN TOGETHER:
+pdf("ShapelyGraphicFinnishNoRecurPOLEtidymodels.pdf") 
+# 2. Create a plot
+plot(ShapelyGraphicFinnishNoRecurPOLEtidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+
+### RUN TOGETHER:
+png("ShapelyGraphicFinnishNoRecurPOLEtidymodels.png") 
+# 2. Create a plot
+plot(ShapelyGraphicFinnishNoRecurPOLEtidymodels)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+ShapelyGraphicFinnishNoRecurPOLEtidymodels  ####Tumour size > 25 mm
+```
+
+```{r}
+cmPOLE <- confusionMatrix(predict(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+# Convertir a data.frame para ggplot
+cm_tablePOLE <- as.data.frame(cmPOLE$table)
+
+# Crear gráfico de la matriz de confusión
+ConfusionMatrixFigureRelapseRiskPOLE <- ggplot(cm_tablePOLE, aes(x = Reference, y = Prediction, fill = Freq)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = Freq), color = "black", size = 4) +
+  scale_fill_gradient(low = "darkslategray2", high = "darkkhaki") +
+  labs(x = element_blank(),y = "Predicted class",
+    fill = "Frequency"
+  ) +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 10,color="black"),
+    axis.title = element_text(size = 12),
+    legend.position = "right", text=element_text(color="black")
+  ) + scale_x_discrete(labels= c("No relapse", "Early relapse", "Late relapse")) +
+   scale_y_discrete(labels=c("No relapse", "Early relapse", "Late relapse"))
+
+ConfusionMatrixFigureRelapseRiskPOLE
+
+### RUN TOGETHER:
+pdf("ConfusionMatrixFigureRelapseRiskPOLE.pdf") 
+# 2. Create a plot
+plot(ConfusionMatrixFigureRelapseRiskPOLE)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+
+### RUN TOGETHER:
+png("ConfusionMatrixFigureRelapseRiskPOLE.png") 
+# 2. Create a plot
+plot(ConfusionMatrixFigureRelapseRiskPOLE)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
+
+ConfusionMatrixFigureRelapseRiskPOLE
+```
+
+##### Extraer métricas:
+
+###### TP53 + MMRd::
+
+```{r}
+prediccionesRecurTP53MMRd <- predict(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels)
+
+probabilidadesRecurTP53MMRd <- predict(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurTP53MMRd <- confusionMatrix(prediccionesRecurTP53MMRd, opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurTP53MMRd <- multiclass.roc(opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk, probabilidadesRecurTP53MMRd[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurTP53MMRd <- auc(roc_curveRecurTP53MMRd)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurTP53MMRd <- pr.curve(scores.class0 = probabilidadesRecurTP53MMRd[, 2], weights.class0 = opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurTP53MMRd  <- pr_curveRecurTP53MMRd$auc.integral
+
+# Obtener las métricas
+accuracyRecurTP53MMRd  <- matriz_confusionRecurTP53MMRd$overall['Accuracy']
+
+kappaRecurTP53MMRd  <- matriz_confusionRecurTP53MMRd$overall['Kappa']
+
+f1RecurTP53MMRd  <-  MLmetrics::F1_Score(predict(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+sensibilidadRecurTP53MMRd  <- MLmetrics::Sensitivity(predict(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurTP53MMRd  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurTP53MMRd , 3),
+    round(f1RecurTP53MMRd , 3),
+    round(sensibilidadRecurTP53MMRd , 3),
+    round(auc_valueRecurTP53MMRd , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurTP53MMRd)
+
+metricasRecurTP53MMRdTranspuesta <- as.data.frame(t(metricasRecurTP53MMRd))
+
+colnames(metricasRecurTP53MMRdTranspuesta) <- metricasRecurTP53MMRdTranspuesta[1,]
+
+metricasRecurTP53MMRdTranspuesta <- metricasRecurTP53MMRdTranspuesta[-1,]
+```
+
+###### TP53 + MMRd - Rf::
+
+```{r}
+TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodelsF1.rds")
+
+prediccionesRecurTP53MMRdRf <- predict(TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels)
+
+probabilidadesRecurTP53MMRdRf <- predict(TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurTP53MMRdRf <- confusionMatrix(prediccionesRecurTP53MMRdRf, opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurTP53MMRdRf <- multiclass.roc(opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk, probabilidadesRecurTP53MMRdRf[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurTP53MMRdRf <- auc(roc_curveRecurTP53MMRdRf)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurTP53MMRdRf <- pr.curve(scores.class0 = probabilidadesRecurTP53MMRdRf[, 2], weights.class0 = opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurTP53MMRdRf  <- pr_curveRecurTP53MMRdRf$auc.integral
+
+# Obtener las métricas
+accuracyRecurTP53MMRdRf  <- matriz_confusionRecurTP53MMRdRf$overall['Accuracy']
+
+kappaRecurTP53MMRdRf  <- matriz_confusionRecurTP53MMRdRf$overall['Kappa']
+
+f1RecurTP53MMRdRf  <-  MLmetrics::F1_Score(predict(TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+sensibilidadRecurTP53MMRdRf  <- MLmetrics::Sensitivity(predict(TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurTP53MMRdRf  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurTP53MMRdRf , 3),
+    round(f1RecurTP53MMRdRf , 3),
+    round(sensibilidadRecurTP53MMRdRf , 3),
+    round(auc_valueRecurTP53MMRdRf , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurTP53MMRdRf)
+
+metricasRecurTP53MMRdTranspuestaRf <- as.data.frame(t(metricasRecurTP53MMRdRf))
+
+colnames(metricasRecurTP53MMRdTranspuestaRf) <- metricasRecurTP53MMRdTranspuestaRf[1,]
+
+metricasRecurTP53MMRdTranspuestaRf <- metricasRecurTP53MMRdTranspuestaRf[-1,]
+```
+
+###### TP53 + MMRd - KNN::
+
+```{r}
+TP53MMRdRiskOfRecurrenceDef.KNN.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TP53MMRdRiskOfRecurrenceDef.KNN.cv.10.tuneLengthROCtidymodelsF1.rds")
+
+prediccionesRecurTP53MMRdKNN <- predict(TP53MMRdRiskOfRecurrenceDef.KNN.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels)
+
+probabilidadesRecurTP53MMRdKNN <- predict(TP53MMRdRiskOfRecurrenceDef.KNN.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurTP53MMRdKNN <- confusionMatrix(prediccionesRecurTP53MMRdKNN, opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurTP53MMRdKNN <- multiclass.roc(opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk, probabilidadesRecurTP53MMRdKNN[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurTP53MMRdKNN <- auc(roc_curveRecurTP53MMRdKNN)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurTP53MMRdKNN <- pr.curve(scores.class0 = probabilidadesRecurTP53MMRdKNN[, 2], weights.class0 = opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurTP53MMRdKNN  <- pr_curveRecurTP53MMRdKNN$auc.integral
+
+# Obtener las métricas
+accuracyRecurTP53MMRdKNN  <- matriz_confusionRecurTP53MMRdKNN$overall['Accuracy']
+
+kappaRecurTP53MMRdKNN  <- matriz_confusionRecurTP53MMRdKNN$overall['Kappa']
+
+f1RecurTP53MMRdKNN  <-  MLmetrics::F1_Score(predict(TP53MMRdRiskOfRecurrenceDef.KNN.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+sensibilidadRecurTP53MMRdKNN  <- MLmetrics::Sensitivity(predict(TP53MMRdRiskOfRecurrenceDef.KNN.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurTP53MMRdKNN  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurTP53MMRdKNN , 3),
+    round(f1RecurTP53MMRdKNN , 3),
+    round(sensibilidadRecurTP53MMRdKNN , 3),
+    round(auc_valueRecurTP53MMRdKNN , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurTP53MMRdKNN)
+
+metricasRecurTP53MMRdTranspuestaKNN <- as.data.frame(t(metricasRecurTP53MMRdKNN))
+
+colnames(metricasRecurTP53MMRdTranspuestaKNN) <- metricasRecurTP53MMRdTranspuestaKNN[1,]
+
+metricasRecurTP53MMRdTranspuestaKNN <- metricasRecurTP53MMRdTranspuestaKNN[-1,]
+```
+
+###### TP53 + MMRd - SVM::
+
+```{r}
+TP53MMRdRiskOfRecurrenceDef.SVM.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TP53MMRdRiskOfRecurrenceDef.SVM.cv.10.tuneLengthROCtidymodelsF1.rds")
+
+prediccionesRecurTP53MMRdSVM <- predict(TP53MMRdRiskOfRecurrenceDef.SVM.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels)
+
+probabilidadesRecurTP53MMRdSVM <- predict(TP53MMRdRiskOfRecurrenceDef.SVM.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurTP53MMRdSVM <- confusionMatrix(prediccionesRecurTP53MMRdSVM, opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurTP53MMRdSVM <- multiclass.roc(opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk, probabilidadesRecurTP53MMRdSVM[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurTP53MMRdSVM <- auc(roc_curveRecurTP53MMRdSVM)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurTP53MMRdSVM <- pr.curve(scores.class0 = probabilidadesRecurTP53MMRdSVM[, 2], weights.class0 = opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurTP53MMRdSVM  <- pr_curveRecurTP53MMRdSVM$auc.integral
+
+# Obtener las métricas
+accuracyRecurTP53MMRdSVM  <- matriz_confusionRecurTP53MMRdSVM$overall['Accuracy']
+
+kappaRecurTP53MMRdSVM  <- matriz_confusionRecurTP53MMRdSVM$overall['Kappa']
+
+f1RecurTP53MMRdSVM  <-  MLmetrics::F1_Score(predict(TP53MMRdRiskOfRecurrenceDef.SVM.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+sensibilidadRecurTP53MMRdSVM  <- MLmetrics::Sensitivity(predict(TP53MMRdRiskOfRecurrenceDef.SVM.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurTP53MMRdSVM  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurTP53MMRdSVM , 3),
+    round(f1RecurTP53MMRdSVM , 3),
+    round(sensibilidadRecurTP53MMRdSVM , 3),
+    round(auc_valueRecurTP53MMRdSVM , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurTP53MMRdSVM)
+
+metricasRecurTP53MMRdTranspuestaSVM <- as.data.frame(t(metricasRecurTP53MMRdSVM))
+
+colnames(metricasRecurTP53MMRdTranspuestaSVM) <- metricasRecurTP53MMRdTranspuestaSVM[1,]
+
+metricasRecurTP53MMRdTranspuestaSVM <- metricasRecurTP53MMRdTranspuestaSVM[-1,]
+```
+
+
+###### Traditional:
+
+```{r}
+#TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels
+#gbmFit2Traditionaltidymodels
+
+prediccionesRecurTraditional <- predict(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurTraditionaltidymodels)
+
+probabilidadesRecurTraditional <- predict(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurTraditionaltidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurTraditional <- confusionMatrix(prediccionesRecurTraditional, opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurTraditional <- multiclass.roc(opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk, probabilidadesRecurTraditional[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurTraditional <- auc(roc_curveRecurTraditional)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurTraditional <- pr.curve(scores.class0 = probabilidadesRecurTraditional[, 2], weights.class0 = opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurTraditional  <- pr_curveRecurTraditional$auc.integral
+
+# Obtener las métricas
+accuracyRecurTraditional  <- matriz_confusionRecurTraditional$overall['Accuracy']
+
+kappaRecurTraditional  <- matriz_confusionRecurTraditional$overall['Kappa']
+
+f1RecurTraditional  <-  MLmetrics::F1_Score(predict(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+sensibilidadRecurTraditional  <- MLmetrics::Sensitivity(predict(TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurTraditional  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurTraditional , 3),
+    round(f1RecurTraditional , 3),
+    round(sensibilidadRecurTraditional , 3),
+    round(auc_valueRecurTraditional , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurTraditional )
+
+metricasRecurTraditionalTranspuesta <- as.data.frame(t(metricasRecurTraditional))
+
+colnames(metricasRecurTraditionalTranspuesta) <- metricasRecurTraditionalTranspuesta[1,]
+
+metricasRecurTraditionalTranspuesta <- metricasRecurTraditionalTranspuesta[-1,]
+```
+
+```{r}
+matriz_confusionRecurTraditional
+```
+
+###### Traditional - Rf:
+
+```{r}
+prediccionesRecurTraditionalRf <- predict(TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurTraditionaltidymodels)
+
+probabilidadesRecurTraditionalRf <- predict(TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurTraditionaltidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurTraditionalRf <- confusionMatrix(prediccionesRecurTraditionalRf, opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurTraditionalRf <- multiclass.roc(opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk, probabilidadesRecurTraditionalRf[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurTraditionalRf <- auc(roc_curveRecurTraditionalRf)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurTraditionalRf <- pr.curve(scores.class0 = probabilidadesRecurTraditionalRf[, 2], weights.class0 = opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurTraditionalRf  <- pr_curveRecurTraditionalRf$auc.integral
+
+# Obtener las métricas
+accuracyRecurTraditionalRf  <- matriz_confusionRecurTraditionalRf$overall['Accuracy']
+
+kappaRecurTraditionalRf  <- matriz_confusionRecurTraditionalRf$overall['Kappa']
+
+f1RecurTraditionalRf  <-  MLmetrics::F1_Score(predict(TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+sensibilidadRecurTraditionalRf  <- MLmetrics::Sensitivity(predict(TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurTraditionalRf  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurTraditionalRf , 3),
+    round(f1RecurTraditionalRf , 3),
+    round(sensibilidadRecurTraditionalRf , 3),
+    round(auc_valueRecurTraditionalRf , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurTraditionalRf )
+
+metricasRecurTraditionalRfTranspuesta <- as.data.frame(t(metricasRecurTraditionalRf))
+
+colnames(metricasRecurTraditionalRfTranspuesta) <- metricasRecurTraditionalRfTranspuesta[1,]
+
+metricasRecurTraditionalRfTranspuesta <- metricasRecurTraditionalRfTranspuesta[-1,]
+```
+
+###### Traditional - KNN:
+
+```{r}
+prediccionesRecurTraditionalKNN <- predict(TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurTraditionaltidymodels)
+
+probabilidadesRecurTraditionalKNN <- predict(TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurTraditionaltidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurTraditionalKNN <- confusionMatrix(prediccionesRecurTraditionalKNN, opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurTraditionalKNN <- multiclass.roc(opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk, probabilidadesRecurTraditionalKNN[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurTraditionalKNN <- auc(roc_curveRecurTraditionalKNN)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurTraditionalKNN <- pr.curve(scores.class0 = probabilidadesRecurTraditionalKNN[, 2], weights.class0 = opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurTraditionalKNN  <- pr_curveRecurTraditionalKNN$auc.integral
+
+# Obtener las métricas
+accuracyRecurTraditionalKNN  <- matriz_confusionRecurTraditionalKNN$overall['Accuracy']
+
+kappaRecurTraditionalKNN  <- matriz_confusionRecurTraditionalKNN$overall['Kappa']
+
+f1RecurTraditionalKNN  <-  MLmetrics::F1_Score(predict(TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+sensibilidadRecurTraditionalKNN  <- MLmetrics::Sensitivity(predict(TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurTraditionalKNN  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurTraditionalKNN , 3),
+    round(f1RecurTraditionalKNN , 3),
+    round(sensibilidadRecurTraditionalKNN , 3),
+    round(auc_valueRecurTraditionalKNN , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurTraditionalKNN )
+
+metricasRecurTraditionalKNNTranspuesta <- as.data.frame(t(metricasRecurTraditionalKNN))
+
+colnames(metricasRecurTraditionalKNNTranspuesta) <- metricasRecurTraditionalKNNTranspuesta[1,]
+
+metricasRecurTraditionalKNNTranspuesta <- metricasRecurTraditionalKNNTranspuesta[-1,]
+```
+
+###### Traditional - SVM:
+
+```{r}
+prediccionesRecurTraditionalSVM <- predict(TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurTraditionaltidymodels)
+
+probabilidadesRecurTraditionalSVM <- predict(TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurTraditionaltidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurTraditionalSVM <- confusionMatrix(prediccionesRecurTraditionalSVM, opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurTraditionalSVM <- multiclass.roc(opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk, probabilidadesRecurTraditionalSVM[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurTraditionalSVM <- auc(roc_curveRecurTraditionalSVM)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurTraditionalSVM <- pr.curve(scores.class0 = probabilidadesRecurTraditionalSVM[, 2], weights.class0 = opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurTraditionalSVM  <- pr_curveRecurTraditionalSVM$auc.integral
+
+# Obtener las métricas
+accuracyRecurTraditionalSVM  <- matriz_confusionRecurTraditionalSVM$overall['Accuracy']
+
+kappaRecurTraditionalSVM  <- matriz_confusionRecurTraditionalSVM$overall['Kappa']
+
+f1RecurTraditionalSVM  <-  MLmetrics::F1_Score(predict(TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+sensibilidadRecurTraditionalSVM  <- MLmetrics::Sensitivity(predict(TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurTraditionaltidymodels),opt.Datos.Test.FinnishRecurTraditionaltidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurTraditionalSVM  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurTraditionalSVM , 3),
+    round(f1RecurTraditionalSVM , 3),
+    round(sensibilidadRecurTraditionalSVM , 3),
+    round(auc_valueRecurTraditionalSVM , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurTraditionalSVM )
+
+metricasRecurTraditionalSVMTranspuesta <- as.data.frame(t(metricasRecurTraditionalSVM))
+
+colnames(metricasRecurTraditionalSVMTranspuesta) <- metricasRecurTraditionalSVMTranspuesta[1,]
+
+metricasRecurTraditionalSVMTranspuesta <- metricasRecurTraditionalSVMTranspuesta[-1,]
+```
+
+###### ESGO:
+
+```{r}
+prediccionesRecurESGO <- predict(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurESGOtidymodels)
+
+probabilidadesRecurESGO <- predict(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurESGOtidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurESGO <- confusionMatrix(prediccionesRecurESGO, opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurESGO <- multiclass.roc(opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk, probabilidadesRecurESGO[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurESGO <- auc(roc_curveRecurESGO)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurESGO <- pr.curve(scores.class0 = probabilidadesRecurESGO[, 2], weights.class0 = opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurESGO  <- pr_curveRecurESGO$auc.integral
+
+# Obtener las métricas
+accuracyRecurESGO  <- matriz_confusionRecurESGO$overall['Accuracy']
+
+kappaRecurESGO  <- matriz_confusionRecurESGO$overall['Kappa']
+
+f1RecurESGO  <-  MLmetrics::F1_Score(predict(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+sensibilidadRecurESGO  <- MLmetrics::Sensitivity(predict(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurESGO  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurESGO , 3),
+    round(f1RecurESGO , 3),
+    round(sensibilidadRecurESGO , 3),
+    round(auc_valueRecurESGO , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurESGO)
+
+metricasRecurESGOTranspuesta <- as.data.frame(t(metricasRecurESGO))
+
+colnames(metricasRecurESGOTranspuesta) <- metricasRecurESGOTranspuesta[1,]
+
+metricasRecurESGOTranspuesta <- metricasRecurESGOTranspuesta[-1,]
+```
+
+###### ESGO - Rf:
+
+```{r}
+prediccionesRecurESGORf <- predict(ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurESGOtidymodels)
+
+probabilidadesRecurESGORf <- predict(ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurESGOtidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurESGORf <- confusionMatrix(prediccionesRecurESGORf, opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurESGORf <- multiclass.roc(opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk, probabilidadesRecurESGORf[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurESGORf <- auc(roc_curveRecurESGORf)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurESGORf <- pr.curve(scores.class0 = probabilidadesRecurESGORf[, 2], weights.class0 = opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurESGORf  <- pr_curveRecurESGORf$auc.integral
+
+# Obtener las métricas
+accuracyRecurESGORf  <- matriz_confusionRecurESGORf$overall['Accuracy']
+
+kappaRecurESGORf  <- matriz_confusionRecurESGORf$overall['Kappa']
+
+f1RecurESGORf  <-  MLmetrics::F1_Score(predict(ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+sensibilidadRecurESGORf  <- MLmetrics::Sensitivity(predict(ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurESGORf  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurESGORf , 3),
+    round(f1RecurESGORf , 3),
+    round(sensibilidadRecurESGORf , 3),
+    round(auc_valueRecurESGORf , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurESGORf)
+
+metricasRecurESGORfTranspuesta <- as.data.frame(t(metricasRecurESGORf))
+
+colnames(metricasRecurESGORfTranspuesta) <- metricasRecurESGORfTranspuesta[1,]
+
+metricasRecurESGORfTranspuesta <- metricasRecurESGORfTranspuesta[-1,]
+```
+
+###### ESGO - KNN:
+
+```{r}
+prediccionesRecurESGOKNN <- predict(ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurESGOtidymodels)
+
+probabilidadesRecurESGOKNN <- predict(ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurESGOtidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurESGOKNN <- confusionMatrix(prediccionesRecurESGOKNN, opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurESGOKNN <- multiclass.roc(opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk, probabilidadesRecurESGOKNN[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurESGOKNN <- auc(roc_curveRecurESGOKNN)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurESGOKNN <- pr.curve(scores.class0 = probabilidadesRecurESGOKNN[, 2], weights.class0 = opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurESGOKNN  <- pr_curveRecurESGOKNN$auc.integral
+
+# Obtener las métricas
+accuracyRecurESGOKNN  <- matriz_confusionRecurESGOKNN$overall['Accuracy']
+
+kappaRecurESGOKNN  <- matriz_confusionRecurESGOKNN$overall['Kappa']
+
+f1RecurESGOKNN  <-  MLmetrics::F1_Score(predict(ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+sensibilidadRecurESGOKNN  <- MLmetrics::Sensitivity(predict(ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurESGOKNN  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurESGOKNN , 3),
+    round(f1RecurESGOKNN , 3),
+    round(sensibilidadRecurESGOKNN , 3),
+    round(auc_valueRecurESGOKNN , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurESGOKNN)
+
+metricasRecurESGOKNNTranspuesta <- as.data.frame(t(metricasRecurESGOKNN))
+
+colnames(metricasRecurESGOKNNTranspuesta) <- metricasRecurESGOKNNTranspuesta[1,]
+
+metricasRecurESGOKNNTranspuesta <- metricasRecurESGOKNNTranspuesta[-1,]
+```
+
+###### ESGO - SVM:
+
+```{r}
+prediccionesRecurESGOSVM <- predict(ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurESGOtidymodels)
+
+probabilidadesRecurESGOSVM <- predict(ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurESGOtidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurESGOSVM <- confusionMatrix(prediccionesRecurESGOSVM, opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurESGOSVM <- multiclass.roc(opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk, probabilidadesRecurESGOSVM[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurESGOSVM <- auc(roc_curveRecurESGOSVM)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurESGOSVM <- pr.curve(scores.class0 = probabilidadesRecurESGOSVM[, 2], weights.class0 = opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurESGOSVM  <- pr_curveRecurESGOSVM$auc.integral
+
+# Obtener las métricas
+accuracyRecurESGOSVM  <- matriz_confusionRecurESGOSVM$overall['Accuracy']
+
+kappaRecurESGOSVM  <- matriz_confusionRecurESGOSVM$overall['Kappa']
+
+f1RecurESGOSVM  <-  MLmetrics::F1_Score(predict(ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+sensibilidadRecurESGOSVM  <- MLmetrics::Sensitivity(predict(ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurESGOtidymodels),opt.Datos.Test.FinnishRecurESGOtidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurESGOSVM  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurESGOSVM , 3),
+    round(f1RecurESGOSVM , 3),
+    round(sensibilidadRecurESGOSVM , 3),
+    round(auc_valueRecurESGOSVM , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurESGOSVM)
+
+metricasRecurESGOSVMTranspuesta <- as.data.frame(t(metricasRecurESGOSVM))
+
+colnames(metricasRecurESGOSVMTranspuesta) <- metricasRecurESGOSVMTranspuesta[1,]
+
+metricasRecurESGOSVMTranspuesta <- metricasRecurESGOSVMTranspuesta[-1,]
+```
+
+###### POLE:
+
+```{r}
+prediccionesRecurPOLE <- predict(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurPOLEtidymodels)
+
+probabilidadesRecurPOLE <- predict(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurPOLEtidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurPOLE <- confusionMatrix(prediccionesRecurPOLE, opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurPOLE <- multiclass.roc(opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk, probabilidadesRecurPOLE[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurPOLE <- auc(roc_curveRecurPOLE)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurPOLE <- pr.curve(scores.class0 = probabilidadesRecurPOLE[, 2], weights.class0 = opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurPOLE  <- pr_curveRecurPOLE$auc.integral
+
+# Obtener las métricas
+accuracyRecurPOLE  <- matriz_confusionRecurPOLE$overall['Accuracy']
+
+kappaRecurPOLE  <- matriz_confusionRecurPOLE$overall['Kappa']
+
+f1RecurPOLE  <-  MLmetrics::F1_Score(predict(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+sensibilidadRecurPOLE  <- MLmetrics::Sensitivity(predict(POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurPOLE  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurPOLE , 3),
+    round(f1RecurPOLE , 3),
+    round(sensibilidadRecurPOLE , 3),
+    round(auc_valueRecurPOLE , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurPOLE )
+
+metricasRecurPOLETranspuesta <- as.data.frame(t(metricasRecurPOLE))
+
+colnames(metricasRecurPOLETranspuesta) <- metricasRecurPOLETranspuesta[1,]
+
+metricasRecurPOLETranspuesta <- metricasRecurPOLETranspuesta[-1,]
+```
+
+###### POLE - Rf:
+
+```{r}
+prediccionesRecurPOLERf <- predict(POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurPOLEtidymodels)
+
+probabilidadesRecurPOLERf <- predict(POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurPOLEtidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurPOLERf <- confusionMatrix(prediccionesRecurPOLERf, opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurPOLERf <- multiclass.roc(opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk, probabilidadesRecurPOLERf[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurPOLERf <- auc(roc_curveRecurPOLERf)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurPOLERf <- pr.curve(scores.class0 = probabilidadesRecurPOLERf[, 2], weights.class0 = opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurPOLERf  <- pr_curveRecurPOLERf$auc.integral
+
+# Obtener las métricas
+accuracyRecurPOLERf  <- matriz_confusionRecurPOLERf$overall['Accuracy']
+
+kappaRecurPOLERf  <- matriz_confusionRecurPOLERf$overall['Kappa']
+
+f1RecurPOLERf  <-  MLmetrics::F1_Score(predict(POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+sensibilidadRecurPOLERf  <- MLmetrics::Sensitivity(predict(POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurPOLERf  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurPOLERf , 3),
+    round(f1RecurPOLERf , 3),
+    round(sensibilidadRecurPOLERf , 3),
+    round(auc_valueRecurPOLERf , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurPOLERf )
+
+metricasRecurPOLERfTranspuesta <- as.data.frame(t(metricasRecurPOLERf))
+
+colnames(metricasRecurPOLERfTranspuesta) <- metricasRecurPOLERfTranspuesta[1,]
+
+metricasRecurPOLERfTranspuesta <- metricasRecurPOLERfTranspuesta[-1,]
+```
+
+###### POLE - KNN:
+
+```{r}
+prediccionesRecurPOLEKNN <- predict(POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurPOLEtidymodels)
+
+probabilidadesRecurPOLEKNN <- predict(POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurPOLEtidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurPOLEKNN <- confusionMatrix(prediccionesRecurPOLEKNN, opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurPOLEKNN <- multiclass.roc(opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk, probabilidadesRecurPOLEKNN[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurPOLEKNN <- auc(roc_curveRecurPOLEKNN)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurPOLEKNN <- pr.curve(scores.class0 = probabilidadesRecurPOLEKNN[, 2], weights.class0 = opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurPOLEKNN  <- pr_curveRecurPOLEKNN$auc.integral
+
+# Obtener las métricas
+accuracyRecurPOLEKNN  <- matriz_confusionRecurPOLEKNN$overall['Accuracy']
+
+kappaRecurPOLEKNN  <- matriz_confusionRecurPOLEKNN$overall['Kappa']
+
+f1RecurPOLEKNN  <-  MLmetrics::F1_Score(predict(POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+sensibilidadRecurPOLEKNN  <- MLmetrics::Sensitivity(predict(POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurPOLEKNN  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurPOLEKNN , 3),
+    round(f1RecurPOLEKNN , 3),
+    round(sensibilidadRecurPOLEKNN , 3),
+    round(auc_valueRecurPOLEKNN , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurPOLEKNN )
+
+metricasRecurPOLEKNNTranspuesta <- as.data.frame(t(metricasRecurPOLEKNN))
+
+colnames(metricasRecurPOLEKNNTranspuesta) <- metricasRecurPOLEKNNTranspuesta[1,]
+
+metricasRecurPOLEKNNTranspuesta <- metricasRecurPOLEKNNTranspuesta[-1,]
+```
+
+###### POLE - SVM:
+
+```{r}
+prediccionesRecurPOLESVM <- predict(POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurPOLEtidymodels)
+
+probabilidadesRecurPOLESVM <- predict(POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels, opt.Datos.Test.FinnishRecurPOLEtidymodels, type = "prob")
+
+# Calcular matriz de confusión y métricas
+matriz_confusionRecurPOLESVM <- confusionMatrix(prediccionesRecurPOLESVM, opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+# Calcular AUC (Área bajo la curva ROC)
+roc_curveRecurPOLESVM <- multiclass.roc(opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk, probabilidadesRecurPOLESVM[, 2])  # asumiendo que "clase" tiene 2 niveles
+auc_valueRecurPOLESVM <- auc(roc_curveRecurPOLESVM)
+
+library(PRROC)
+# Calcular PR AUC (Área bajo la curva de Precision-Recall)
+pr_curveRecurPOLESVM <- pr.curve(scores.class0 = probabilidadesRecurPOLESVM[, 2], weights.class0 = opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk == "Positivo", curve = TRUE)
+pr_auc_valueRecurPOLESVM  <- pr_curveRecurPOLESVM$auc.integral
+
+# Obtener las métricas
+accuracyRecurPOLESVM  <- matriz_confusionRecurPOLESVM$overall['Accuracy']
+
+kappaRecurPOLESVM  <- matriz_confusionRecurPOLESVM$overall['Kappa']
+
+f1RecurPOLESVM  <-  MLmetrics::F1_Score(predict(POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+sensibilidadRecurPOLESVM  <- MLmetrics::Sensitivity(predict(POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurPOLEtidymodels),opt.Datos.Test.FinnishRecurPOLEtidymodels$recurrence_risk)
+
+# Crear tabla con todas las métricas
+metricasRecurPOLESVM  <- data.frame(
+  Metric = c("Accuracy", "F1 Score","Sensitivity", "AUC"),
+  Value = c(
+    round(accuracyRecurPOLESVM , 3),
+    round(f1RecurPOLESVM , 3),
+    round(sensibilidadRecurPOLESVM , 3),
+    round(auc_valueRecurPOLESVM , 3)
+  )
+)
+
+# Mostrar la tabla de métricas
+print(metricasRecurPOLESVM )
+
+metricasRecurPOLESVMTranspuesta <- as.data.frame(t(metricasRecurPOLESVM))
+
+colnames(metricasRecurPOLESVMTranspuesta) <- metricasRecurPOLESVMTranspuesta[1,]
+
+metricasRecurPOLESVMTranspuesta <- metricasRecurPOLESVMTranspuesta[-1,]
+```
+
+###### Métricas finales combinadas:
+
+```{r}
+MetricasTotalesRecurRiskTP53MMRd <- rbind(metricasRecurTP53MMRdTranspuesta, metricasRecurTP53MMRdTranspuestaRf[1,], metricasRecurTP53MMRdTranspuestaKNN[1,],metricasRecurTP53MMRdTranspuestaSVM[1,])
+
+row.names(MetricasTotalesRecurRiskTP53MMRd) <- c("TP53 + MMRd - GBM", "TP53 + MMRd - RF", "TP53 + MMRd - KNN", "TP53 + MMRd - SVM")
+
+#write.csv(MetricasTotalesRecurRiskTP53MMRd, "MetricasTotalesRecurRiskTP53MMRd.csv")
+```
+
+```{r}
+MetricasTotalesRecurRiskTraditional <- rbind(metricasRecurTraditionalTranspuesta, metricasRecurTraditionalRfTranspuesta[1,], metricasRecurTraditionalKNNTranspuesta[1,],metricasRecurTraditionalSVMTranspuesta[1,])
+
+row.names(MetricasTotalesRecurRiskTraditional) <- c("Traditional - GBM", "Traditional - RF", "Traditional - KNN", "Traditional - SVM")
+
+#write.csv(MetricasTotalesRecurRiskTraditional, "MetricasTotalesRecurRiskTraditional.csv")
+```
+
+```{r}
+MetricasTotalesRecurRiskESGO <- rbind(metricasRecurESGOTranspuesta, metricasRecurESGORfTranspuesta[1,], metricasRecurESGOKNNTranspuesta[1,],metricasRecurESGOSVMTranspuesta[1,])
+
+row.names(MetricasTotalesRecurRiskESGO) <- c("ESGO - GBM", "ESGO - RF", "ESGO - KNN", "ESGO - SVM")
+
+#write.csv(MetricasTotalesRecurRiskESGO, "MetricasTotalesRecurRiskESGO.csv")
+```
+
+```{r}
+MetricasTotalesRecurRiskPOLE <- rbind(metricasRecurPOLETranspuesta, metricasRecurPOLERfTranspuesta[1,], metricasRecurPOLEKNNTranspuesta[1,],metricasRecurPOLESVMTranspuesta[1,])
+
+row.names(MetricasTotalesRecurRiskPOLE) <- c("POLE - GBM", "POLE - RF", "POLE - KNN", "POLE - SVM")
+
+#write.csv(MetricasTotalesRecurRiskPOLE, "MetricasTotalesRecurRiskPOLE.csv")
+```
+
+```{r}
+MetricasTotalesRecurRisk <- rbind(MetricasTotalesRecurRiskTP53MMRd,MetricasTotalesRecurRiskTraditional,MetricasTotalesRecurRiskESGO,MetricasTotalesRecurRiskPOLE)
+
+#write.csv(MetricasTotalesRecurRisk, "MetricasTotalesRecurRisk.csv")
+```
+
+### Heatmap
+
+```{r}
+MetricasTotalesRecurRiskImputada <- MetricasTotalesRecurRisk
+
+MetricasTotalesRecurRiskImputada[12,2] <- 0
+
+MetricasTotalesRecurRiskImputada2 <- sapply(MetricasTotalesRecurRiskImputada, as.numeric)
+
+row.names(MetricasTotalesRecurRiskImputada2) <- row.names(MetricasTotalesRecurRiskImputada)
+
+heatmap(MetricasTotalesRecurRiskImputada2,Colv = NA, Rowv = NA, scale="column")
+
+library(RColorBrewer)
+
+colMain <- colorRampPalette(brewer.pal(8, "Blues"))(25)
+
+heatmap(MetricasTotalesRecurRiskImputada2, Colv = NA, Rowv = NA, scale="column" , col=colMain)
+
+```
+
+```{r}
+MetricasTotalesRecurRiskImputada3 <- as.data.frame(MetricasTotalesRecurRiskImputada2)
+
+MetricasTotalesRecurRiskImputada3$Sample <- rownames(MetricasTotalesRecurRiskImputada3)
+
+# Paso 2: Reorganizar el dataset de formato ancho a largo
+library(reshape2)
+
+df_long <- melt(MetricasTotalesRecurRiskImputada3, id.vars = "Sample")
+
+# Ahora df_long tiene tres columnas: Sample, variable, value
+
+# Paso 3: Crear el heatmap con ggplot2
+DefinitiveHeatmapMetrics <-  ggplot(df_long, aes(x = variable, y = Sample, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 3)), size = 3, color="white") +
+  scale_fill_gradient(low = "lightblue", high = "darkblue") +  # Puedes personalizar los colores
+  theme_minimal() +
+  labs(x = element_blank(), y = element_blank(), fill = "Value") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+  text=element_text(color="black"),axis.text=element_text(color="black"))
+
+DefinitiveHeatmapMetrics
+
+### RUN TOGETHER:
+png("HeatmapForMetrics.png") 
+# 2. Create a plot
+plot(DefinitiveHeatmapMetrics)
+# Close the png file
+dev.off() 
+###
+
+### RUN TOGETHER:
+pdf("HeatmapForMetrics.pdf") 
+# 2. Create a plot
+plot(DefinitiveHeatmapMetrics)
+# Close the png file
+dev.off() 
+###
+
+DefinitiveHeatmapMetrics
+```
+
+#### Venn diagrams:
+
+```{r}
+library("ggVennDiagram")
+
+VennDiagramRisk <- ggVennDiagram(list(ImportanciaFinnishRecurTP53MMRdTidymodelsOrdenada$`row.names(ImportanciaFinnishRecurTP53MMRdTidymodels)`, ImportanciaFinnishRecurTraditionalTidymodelsOrdenada$`row.names(ImportanciaFinnishRecurTraditionalTidymodels)`, ImportanciaFinnishRecurESGOTidymodelsOrdenada$`row.names(ImportanciaFinnishRecurESGOTidymodels)`, ImportanciaFinnishRecurPOLETidymodelsOrdenada$`row.names(ImportanciaFinnishRecurPOLETidymodels)`),  label_alpha = 0,
+  category.names = c("TP53 + MMRd","Traditional", "ESGO","POLE"), set_color = c("black","red","green","orange")
+  ) +
+  ggplot2::scale_fill_distiller(palette = "RdBu") +
+  scale_x_continuous(expand = expansion(mult = .2)) +
+  scale_fill_gradient(low = "lightblue", high = "steelblue4")
+
+VennDiagramRisk
+
+### RUN TOGETHER:
+png("VennDiagramRisk.png") 
+# 2. Create a plot
+plot(VennDiagramRisk)
+# Close the png file
+dev.off() 
+###
+
+### RUN TOGETHER:
+pdf("VennDiagramRisk.pdf") 
+# 2. Create a plot
+plot(VennDiagramRisk)
+# Close the png file
+dev.off() 
+###
+
+VennDiagramRisk
+```
+
+```{r}
+venn_data <- process_data(Venn(list(ImportanciaFinnishRecurTP53MMRdTidymodelsOrdenada$`row.names(ImportanciaFinnishRecurTP53MMRdTidymodels)`, ImportanciaFinnishRecurTraditionalTidymodelsOrdenada$`row.names(ImportanciaFinnishRecurTraditionalTidymodels)`, ImportanciaFinnishRecurESGOTidymodelsOrdenada$`row.names(ImportanciaFinnishRecurESGOTidymodels)`, ImportanciaFinnishRecurPOLETidymodelsOrdenada$`row.names(ImportanciaFinnishRecurPOLETidymodels)`)))
+
+# View all intersections
+intersections <- venn_data$regionData
+```
+
+```{r}
+intersectionsdataframe <- as.data.frame(intersections)
+
+intersectionsdataframe$item <- sapply(intersectionsdataframe$item, function(x) paste(x, collapse = ", "))
+
+#write.csv(intersectionsdataframe, "VennDiagramData.csv", row.names = FALSE)
+```
+
+
