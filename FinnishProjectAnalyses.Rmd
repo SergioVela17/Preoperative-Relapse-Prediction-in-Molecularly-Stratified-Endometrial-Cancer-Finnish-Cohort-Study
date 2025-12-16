@@ -37,32 +37,53 @@ for (i in 1:NCOL(DatasetRiskOfRecurrence)) {
 ```
 
 ```{r}
-DatasetRiskOfRecurrenceTP53MMRd <- DatasetRiskOfRecurrence[,-c(1,4,33)]
+DatasetRiskOfRecurrenceTP53MMRd <- DatasetRiskOfRecurrence[,-c(1,4,34)]
 
-DatasetRiskOfRecurrenceTraditional <- DatasetRiskOfRecurrence[,-c(1,31,32,33)]
+DatasetRiskOfRecurrenceTraditional <- DatasetRiskOfRecurrence[,-c(1,31,32,34)]
 
-DatasetRiskOfRecurrenceESGO <- DatasetRiskOfRecurrence[,-c(4,31,32,33)]
+DatasetRiskOfRecurrenceESGO <- DatasetRiskOfRecurrence[,-c(4,31,32,34)]
 
 DatasetRiskOfRecurrencePOLE <- DatasetRiskOfRecurrence[,-c(1,4,31,32)]
 
-#write.csv(DatasetRiskOfRecurrenceTP53MMRd, "DatasetTP53MMRdRiskOfRecurrence.csv")
-#write.csv(DatasetRiskOfRecurrenceTraditional, "DatasetTraditionalRiskOfRecurrence.csv")
-#write.csv(DatasetRiskOfRecurrenceESGO, "DatasetESGORiskOfRecurrence.csv")
-#write.csv(DatasetRiskOfRecurrencePOLE, "DatasetPOLERiskOfRecurrence.csv")
+#write.csv(DatasetRiskOfRecurrenceTP53MMRd, "DatasetTP53MMRdRiskOfRecurrence.csv", row.names = FALSE)
+#write.csv(DatasetRiskOfRecurrenceTraditional, "DatasetTraditionalRiskOfRecurrence.csv", row.names = FALSE)
+#write.csv(DatasetRiskOfRecurrenceESGO, "DatasetESGORiskOfRecurrence.csv", row.names = FALSE)
+#write.csv(DatasetRiskOfRecurrencePOLE, "DatasetPOLERiskOfRecurrence.csv", row.names = FALSE)
 ```
 
 #### Applied molecular distribution:
 
-```{r}
-summary(DatosPruebaRiskOfRecurrence_DatasetTP53MMRdRiskOfRecurrenceTraditional$`Applied Molecular Classification`)
+This creates a barplot showing the Molecular Distribution of the cohort
 
-ggplot(DatasetRiskOfRecurrenceTraditional, mapping = aes(x = DatasetRiskOfRecurrenceTraditional$`Applied Molecular Classification`)) +
-  geom_bar(mapping = aes(fill = DatasetRiskOfRecurrenceTraditional$`Applied Molecular Classification`)) + scale_fill_discrete(name = "Molecular subtype") + ggtitle("Molecular distribution of samples") +
+```{r}
+library(ggplot2)
+
+AppliedMolecularDistribution <- ggplot(DatasetRiskOfRecurrenceTraditional, mapping = aes(x = DatasetRiskOfRecurrenceTraditional$AppliedMolecularClassification)) +
+  geom_bar(mapping = aes(fill = DatasetRiskOfRecurrenceTraditional$AppliedMolecularClassification)) + scale_fill_discrete(name = "Molecular subtype") + ggtitle("Molecular distribution of samples") +
   xlab("Subtype") + ylab("Count") + theme_bw() +
    geom_text(aes(label = ..count..), stat = "count", vjust = 2, colour = "white")
+
+### RUN TOGETHER:
+png("AppliedMolecularDistribution.png") 
+# 2. Create a plot
+plot(AppliedMolecularDistribution)
+# Close the png file
+dev.off() 
+### UNTIL HERE
+
+### RUN TOGETHER:
+pdf("AppliedMolecularDistribution.pdf") 
+# 2. Create a plot
+plot(AppliedMolecularDistribution)
+# Close the pdf file
+dev.off() 
+### UNTIL HERE
 ```
 
-#### Demographics tables:
+### Demographics tables:
+
+The following table created the demographics table shown in Table 2 of the manuscript. There is a small variation to it, as missing values are reported
+in the figure foot instead of whithin the table.
 
 ```{r}
 library(tidyverse)
@@ -70,9 +91,9 @@ library(finalfit)
 library(randomForest)
 library(dplyr)
 
-DatasetRiskOfRecurrence <- read.csv("DatasetRiskOfRecurrenceFinnishCohort.csv")
+DatasetRiskOfRecurrence <- read.csv("DataRiskOfRecurrenceFinnishCohort.csv")
 
-DatasetRiskOfRecurrence <- DatasetRiskOfRecurrence%>%
+DatasetRiskOfRecurrence <- DatasetRiskOfRecurrence%>%   #Ensure that all the character-type features are changed to factors
   mutate(across(where(is.character), as.factor))
 
 DatasetRiskOfRecurrence <- droplevels(DatasetRiskOfRecurrence)
@@ -85,21 +106,27 @@ DemographicTableRecurRisk <-  DatasetRiskOfRecurrence %>%
 
 DemographicTableRecurRisk
 
-#writexl::write_xlsx(DemograficTableRecurRisk, "DemographicTableRelapseRisk.xlsx")
+#writexl::write_xlsx(DemograficTableRecurRisk, "DemographicTableRelapseRisk.xlsx") #This saves the Demographic table (Table 2) as an Excel file
 ```
 
-### TP53 + MMRd rfe with tidymodels:
+### Recursive feature elimination: 
+#### TP53 + MMRd rfe with tidymodels:
 
 ```{r}
-# install.packages(c("tidymodels", "vip", "themis"))
+# install.packages(c("tidymodels", "vip", "themis")) #If not previously available
 
 library(tidymodels)
 library(vip)
 library(themis)
 library(readr)
 library(caret)
+library(dplyr)
+library(randomForest)
 
 #DatasetRiskOfRecurrenceTP53MMRd <- read_csv("DatasetTP53MMRdRiskOfRecurrence.csv")
+
+DatasetRiskOfRecurrenceTP53MMRd <- DatasetRiskOfRecurrenceTP53MMRd %>%
+  dplyr::select(!Time)      #Remove time feature as it is not required in this part and it should not be included in the RFE
 
 DatasetRiskOfRecurrenceTP53MMRd <- DatasetRiskOfRecurrenceTP53MMRd%>%
   mutate(across(where(is.character), as.factor))
@@ -117,7 +144,7 @@ split2 <- initial_split(datos_testValidation, prop = 0.7, strata = `Recurrence r
 datos_test <- training(split2)
 datos_Validation  <- testing(split2)
 
-# Make sure that the character features are factors
+# Make sure that the character features are factors after partitioning the dataset
 
 datos_train <- datos_train %>%
   mutate(across(where(is.character), as.factor))
@@ -128,7 +155,7 @@ datos_test <- datos_test %>%
 datos_Validation <- datos_Validation %>%
   mutate(across(where(is.character), as.factor))
 
-datos_train <- datos_train %>%
+datos_train <- datos_train %>%       #Renaming outcome feature for clarity
   rename(recurrence_risk = `RecurrenceRisk`)
 
 datos_test <- datos_test %>%
@@ -137,13 +164,13 @@ datos_test <- datos_test %>%
 datos_Validation <- datos_Validation %>%
   rename(recurrence_risk = `RecurrenceRisk`)
 
-datos_train$recurrence_risk <- factor(datos_train$recurrence_risk)
+datos_train$recurrence_risk <- factor(datos_train$recurrence_risk)    #Ensure that the levels order is the same, otherwise this overwrites them. If it's not, you can use relevel to set the reference level
 
 datos_test$recurrence_risk <- factor(datos_test$recurrence_risk, levels = levels(datos_train$recurrence_risk))
 
 datos_Validation$recurrence_risk <- factor(datos_Validation$recurrence_risk, levels = levels(datos_train$recurrence_risk))
 
-datos_train <- na.roughfix(datos_train)
+datos_train <- na.roughfix(datos_train) #Imputation after partition of the dataset
 
 datos_test <- na.roughfix(datos_test)
 
@@ -152,11 +179,11 @@ datos_Validation <- na.roughfix(datos_Validation)
 base_recipe <- recipe(recurrence_risk ~ ., data = datos_train) %>%
   step_zv(all_predictors()) %>%                      # Eliminates predictors without variation
   step_normalize(all_numeric_predictors()) %>%    # Standardizes numeric covariates
-  step_dummy(all_nominal_predictors())            # Transforms factor features to dummies
+  step_dummy(all_nominal_predictors())            # Transforms factor features to dummies. This was already done before partition, so it should not change anything
 
 base_recipe_prepared <- prep(base_recipe, training = datos_train, retain = TRUE)
 
-processed_data <- juice(base_recipe_prepared)
+processed_data <- juice(base_recipe_prepared)    #Preprocessed data is extracted and used to train a ranger model
 
 model_rf <- rand_forest(mode = "classification", trees = 500) %>%
   set_engine("ranger", importance = "impurity")
@@ -166,11 +193,11 @@ model_base <- model_rf %>%
 
 vip_vals <- model_base %>% vi()
 
-sorted_variables <- vip_vals %>%
+sorted_variables <- vip_vals %>%   #Obtain the list of features sorted by higher to lowwer importance
   arrange(desc(Importance)) %>%
   pull(Variable)
 
-# 5 fold cross-validation for RFE:
+# 5 fold cross-validation for RFE:   #Beginning of cross-validated RFE to get the best subset of features
 cv_folds <- vfold_cv(datos_train, v = 5, strata = recurrence_risk)
 
 evaluate_with_top_n <- function(n) {
@@ -203,7 +230,7 @@ evaluate_with_top_n <- function(n) {
 
 top_n_values <- c(5:30)
 
-results_rfe <- map_dfr(top_n_values, evaluate_with_top_n)
+results_rfe <- map_dfr(top_n_values, evaluate_with_top_n)   #Run the RFE function with different number of features
 
 #saveRDS(results_rfe, "RFEresultsTP53MMRd.rds")
 #saveRDS(sorted_variables, "MoreToleastImportantFeaturesTP53MMRd.rds")
@@ -212,7 +239,7 @@ results_rfe <- map_dfr(top_n_values, evaluate_with_top_n)
 #results_rfe <- readRDS("RFEresultsTP53MMRd.rds")
 #sorted_variables <- readRDS("MoreToleastImportantFeaturesTP53MMRd.rds")
 
-best_n <- results_rfe %>%
+best_n <- results_rfe %>%      #Extract which is the best number of features (according to F1-Score results)
   filter(.metric == "f_meas") %>%
   arrange(desc(mean)) %>%
   slice(1) %>%
@@ -221,11 +248,10 @@ best_n <- results_rfe %>%
 cat("Best number of features according to F1-score:", best_n, "\n") 
 
 best_vars <- sorted_variables[1:19]
-"recurrence_risk" %in% mejores_vars
 
 best_vars <- setdiff(best_vars, "recurrence_risk")
 
-recipe_final <- recipe(recurrence_risk ~ ., data = datos_train) %>%
+recipe_final <- recipe(recurrence_risk ~ ., data = datos_train) %>%    #Get a recipe that selects the subset of best features obtained
   step_normalize(all_numeric_predictors()) %>%
   step_dummy(all_nominal_predictors()) %>%
   update_role(recurrence_risk, new_role = "outcome") %>%
@@ -242,58 +268,53 @@ fit_final <- fit(
   wf_final,
   data = datos_train)
 
-recipe_eval <- recipe_final %>% prep(training = datos_train, retain = TRUE)
-datos_train_bake <- bake(recipe_eval, new_data = datos_train)
+recipe_eval <- recipe_final %>% prep(training = datos_train, retain = TRUE) #Preprocess the train data with the recipe
+datos_train_bake <- bake(recipe_eval, new_data = datos_train) #Obtain train and test data processed and with the optimal subset of features
 datos_test_bake <- bake(recipe_eval, new_data = datos_test)
-
-names(datos_test_bake)
 
 fit_final %>% extract_fit_parsnip() %>% .$fit %>% names()
 ```
 
 
-
-
+### Algorithm training for TP53 + MMRd models:
 #### Training with GBM:
+
 ```{r}
+library(pROC) 
+
+metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
+  
+  y_true <- data$obs
+  y_pred <- data$pred
+  y_prob <- data[[lev[1]]] 
+  
+  f1  <- F1_Score(y_true = y_true, y_pred = y_pred, positive = lev[1])
+  acc <- Accuracy(y_true = y_true, y_pred = y_pred)
+  sens <- Sensitivity(y_true = y_true, y_pred = y_pred, positive = lev[1])
+  auc <- auc(y_true, y_prob)
+  
+  c(F1 = f1, AUC = as.numeric(auc), Sensitivity = sens, Accuracy = acc)
+}
+
 set.seed(123)
-n_valores = 10
-seeds <- vector(mode = "list", length = 11)
-for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
-seeds[[11]] <- sample.int(1000, 1)
+n_values = 10
+seeds <- vector(mode = "list", length = 101)
+for(i in 1:100) seeds[[i]] <- sample.int(1000, n_values)
+seeds[[101]] <- sample.int(1000, 1)
 
-f1 <- function(data, lev = NULL, model = NULL) {
-    f1_val <- f1_score(data$pred,data$obs)
-    names(f1_val) <- c("F1")
-    f1_val
-}
+fitControl <- trainControl(## 10-fold repeated CV
+                           method = "repeatedcv",
+                           number = 10,
+                           repeats = 10,    ## repeated ten times
+                           seeds = seeds,
+                           returnResamp = "final",
+                           search = "grid",
+                           verboseIter=FALSE,
+                           allowParallel = TRUE,
+                           classProbs = T,
+                           summaryFunction = metrics_mlmetrics)
 
-f1_score <- function(predicted, expected, positive.class="1") {
-    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
-    expected  <- as.factor(expected)
-    cm = as.matrix(table(expected, predicted))
-
-    precision <- diag(cm) / colSums(cm)
-    recall <- diag(cm) / rowSums(cm)
-    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
-
-    #Assuming that F1 is zero when it's not possible compute it
-    f1[is.na(f1)] <- 0
-
-    #Binary F1 or Multi-class macro-averaged F1
-    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
-}
-
-fitControltp53MMRdF1 <- trainControl(method="cv", number = 10,
-                                        seeds = seeds,
-                                        returnResamp = "final",
-                                        search = "grid",
-                                        verboseIter=FALSE,
-                                        allowParallel = TRUE,
-                                        classProbs = T,
-                                        summaryFunction = f1)
-
-fitControltp53MMRdF1$sampling <- "smote" #smote
+fitControl$sampling <- "smote"
 ```
 
 ```{r}
@@ -319,17 +340,21 @@ gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9),
 set.seed(342)
 TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels,
                             method="gbm",
-                            tuneLength = n_valores,
-                            trControl=fitControltp53MMRdF1,
+                            trControl=fitControl,
+                            verbose=FALSE,
                             tuneGrid = gbmGrid,
-                            metric='F1')
+                            metric='AUC')
 
 TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels
 
+ic_f1  <- quantile(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels$resample$F1, c(.025, .975), na.rm = TRUE)
+ic_auc <- quantile(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels$resample$AUC, c(.025, .975), na.rm = TRUE)
+ic_sen <- quantile(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels$resample$Sensitivity, c(.025, .975), na.rm = TRUE)
+ic_acc <- quantile(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels$resample$Accuracy, c(.025, .975), na.rm = TRUE)
 
 #saveRDS(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels, file = "TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthF1TidymodelsSeptember.rds")
 
-TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthF1TidymodelsSeptember.rds")
+#TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthF1TidymodelsSeptember.rds")
 ```
 
 ```{r}
@@ -355,53 +380,53 @@ confusionMatrix(predict(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidym
 #### Rf:
 
 ```{r}
+library(pROC) 
+
+metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
+  
+  y_true <- data$obs
+  y_pred <- data$pred
+  y_prob <- data[[lev[1]]] 
+  
+  f1  <- F1_Score(y_true = y_true, y_pred = y_pred, positive = lev[1])
+  acc <- Accuracy(y_true = y_true, y_pred = y_pred)
+  sens <- Sensitivity(y_true = y_true, y_pred = y_pred, positive = lev[1])
+  auc <- auc(y_true, y_prob)
+  
+  c(F1 = f1, AUC = as.numeric(auc), Sensitivity = sens, Accuracy = acc)
+}
+
 set.seed(123)
-n_valores = 10
-seeds <- vector(mode = "list", length = 11)
-for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
-seeds[[11]] <- sample.int(1000, 1)
+n_values = 10
+seeds <- vector(mode = "list", length = 101)
+for(i in 1:100) seeds[[i]] <- sample.int(1000, n_values)
+seeds[[101]] <- sample.int(1000, 1)
 
-f1 <- function(data, lev = NULL, model = NULL) {
-    f1_val <- f1_score(data$pred,data$obs)
-    names(f1_val) <- c("F1")
-    f1_val
-}
+fitControl <- trainControl(## 10-fold repeated CV
+                           method = "repeatedcv",
+                           number = 10,
+                           repeats = 10,    ## repeated ten times
+                           seeds = seeds,
+                           returnResamp = "final",
+                           search = "grid",
+                           verboseIter=FALSE,
+                           allowParallel = TRUE,
+                           classProbs = T,
+                           summaryFunction = metrics_mlmetrics)
 
-f1_score <- function(predicted, expected, positive.class="1") {
-    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
-    expected  <- as.factor(expected)
-    cm = as.matrix(table(expected, predicted))
-
-    precision <- diag(cm) / colSums(cm)
-    recall <- diag(cm) / rowSums(cm)
-    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
-
-    #Assuming that F1 is zero when it's not possible compute it
-    f1[is.na(f1)] <- 0
-
-    #Binary F1 or Multi-class macro-averaged F1
-    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
-}
-
-fitControltp53MMRdF1 <- trainControl(method="cv", number = 10,
-                                        seeds = seeds,
-                                        returnResamp = "final",
-                                        search = "grid",
-                                        verboseIter=FALSE,
-                                        allowParallel = TRUE,
-                                        classProbs = T,
-                                        summaryFunction = f1)
-
-fitControltp53MMRdF1$sampling <- "smote" #smote
+fitControl$sampling <- "smote"
 ```
 
 ```{r}
+rfGrid <-  expand.grid(mtry = (1:15))
+
 set.seed(342)
 TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels,
                             method="rf",
-                            tuneLength = n_valores,
-                            trControl=fitControltp53MMRdF1,
-                            metric='F1')
+                            verbose = FALSE,
+                            tuneGrid = rfGrid,
+                            trControl=fitControl,
+                            metric='AUC')
 
 TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels
 
@@ -436,62 +461,20 @@ confusionMatrix(predict(TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymo
 ```{r}
 knn_grid <- expand.grid(k = seq(3, 21, by = 2)) 
 ```
-
-```{r}
-set.seed(123)
-n_valores = 10
-seeds <- vector(mode = "list", length = 11)
-for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
-seeds[[11]] <- sample.int(1000, 1)
-
-f1 <- function(data, lev = NULL, model = NULL) {
-    f1_val <- f1_score(data$pred,data$obs)
-    names(f1_val) <- c("F1")
-    f1_val
-}
-
-f1_score <- function(predicted, expected, positive.class="1") {
-    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
-    expected  <- as.factor(expected)
-    cm = as.matrix(table(expected, predicted))
-
-    precision <- diag(cm) / colSums(cm)
-    recall <- diag(cm) / rowSums(cm)
-    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
-
-    #Assuming that F1 is zero when it's not possible compute it
-    f1[is.na(f1)] <- 0
-
-    #Binary F1 or Multi-class macro-averaged F1
-    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
-}
-
-fitControltp53MMRdF1 <- trainControl(method="cv", number = 10,
-                                        seeds = seeds,
-                                        returnResamp = "final",
-                                        search = "grid",
-                                        verboseIter=FALSE,
-                                        allowParallel = TRUE,
-                                        classProbs = T,
-                                        summaryFunction = f1)
-
-fitControltp53MMRdF1$sampling <- "smote" #smote
-```
-
 ```{r}
 set.seed(342)
 TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels,
                             method="knn",
-                            tuneLength = n_valores,
-                            trControl=fitControltp53MMRdF1,
-                            metric='F1',
+                            verbose = FALSE,
+                            trControl=fitControl,
+                            metric='AUC',
                             tuneGrid = knn_grid)
 
 TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels
 
 #saveRDS(TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels, file = "TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodelsF1.rds")
 
-TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodelsF1.rds")
+#TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodelsF1.rds")
 ```
 
 ```{r}
@@ -517,33 +500,6 @@ confusionMatrix(predict(TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidym
 #### SVM:
 
 ```{r}
-set.seed(123)
-n_valores = 10
-seeds <- vector(mode = "list", length = 11)
-for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
-seeds[[11]] <- sample.int(1000, 1)
-
-f1 <- function(data, lev = NULL, model = NULL) {
-    f1_val <- f1_score(data$pred,data$obs)
-    names(f1_val) <- c("F1")
-    f1_val
-}
-
-f1_score <- function(predicted, expected, positive.class="1") {
-    predicted <- factor(as.character(predicted), levels=unique(as.character(expected)))
-    expected  <- as.factor(expected)
-    cm = as.matrix(table(expected, predicted))
-
-    precision <- diag(cm) / colSums(cm)
-    recall <- diag(cm) / rowSums(cm)
-    f1 <-  ifelse(precision + recall == 0, 0, 2 * precision * recall / (precision + recall))
-
-    #Assuming that F1 is zero when it's not possible compute it
-    f1[is.na(f1)] <- 0
-
-    ifelse(nlevels(expected) == 2, f1[positive.class], mean(f1))
-}
-
 svm_grid <- expand.grid(
   C = 2^(-1:2),
   sigma = 2^(-2:1)
@@ -551,7 +507,7 @@ svm_grid <- expand.grid(
 n_models <- nrow(svm_grid)  # 16 combinations
 
 set.seed(123)
-num_folds <- 10 
+num_folds <- 100 
 seeds <- vector(mode = "list", length = num_folds + 1)
 for (i in 1:num_folds) {
   seeds[[i]] <- sample.int(1000, n_models)
@@ -559,16 +515,17 @@ for (i in 1:num_folds) {
 
 seeds[[num_folds + 1]] <- sample.int(1000, 1)
 
-fitControlF1 <- trainControl(
-  method = "cv",
+fitControlSVM <- trainControl(
+  method = "repeatedcv",
   number = 10,
+  repeats = 10,
   seeds = seeds,
   returnResamp = "final",
   search = "grid",
   verboseIter = FALSE,
   allowParallel = TRUE,
   classProbs = TRUE,
-  summaryFunction = f1,
+  summaryFunction = metrics_mlmetrics,
   sampling = "smote" 
 )
 ```
@@ -577,16 +534,15 @@ fitControlF1 <- trainControl(
 set.seed(342)
 TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels,
                             method="svmRadial",
-                            tuneLength = n_valores,
-                            trControl=fitControlF1  ,
-                            metric='F1',
+                            trControl=fitControlSVM  ,
+                            metric='AUC',
                             tuneGrid = svm_grid)
 
 TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels
 
 #saveRDS(TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels, file = "TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodelsF1.rds")
 
-TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodelsF1.rds")
+#TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels <- readRDS(file = "TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodelsF1.rds")
 ```
 
 ```{r}
@@ -609,8 +565,7 @@ MLmetrics::F1_Score(predict(TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCt
 confusionMatrix(predict(TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels),opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk)
 ```
 
-
-
+### Metrics extraction per class and figures creation:
 
 ```{r}
 library(caret)
@@ -643,20 +598,21 @@ library(rlang)
 calculate_metrics_per_classTidymodels <- function(class_objetive) {
   df_binary <- df_resultsTidymodels %>%
     mutate(
-      truth_bin = factor(ifelse(truth == class_objetive, "Sí", "No"), levels = c("Yes", "No")),
-      pred_bin  = factor(ifelse(predicted == class_objetive, "Sí", "No"), levels = c("Yes", "No"))
+      truth_bin = factor(ifelse(truth == class_objetive, "Yes", "No"), levels = c("Yes", "No")),
+      pred_bin  = factor(ifelse(predicted == class_objetive, "Yes", "No"), levels = c("Yes", "No"))
     )
   
-   precision <- yardstick::precision(data = df_binario, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
-  recall    <- yardstick::recall(data = df_binario, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
-  f1        <- yardstick::f_meas(data = df_binario, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
-  roc_auc_auc <- roc_auc(df_binario, truth_bin, !!sym(clase_objetivo), event_level = "first")$.estimate
-  pr_auc_auc  <- pr_auc(df_binario, truth_bin, !!sym(clase_objetivo), event_level = "first")$.estimate
+   precision <- yardstick::precision(data = df_binary, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  recall    <- yardstick::recall(data = df_binary, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  f1        <- yardstick::f_meas(data = df_binary, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  Accuracy_specific        <- yardstick::accuracy(data = df_binary, truth = truth_bin, estimate = pred_bin, event_level = "first")$.estimate
+  roc_auc_auc <- roc_auc(df_binary, truth_bin, !!sym(class_objetive), event_level = "first")$.estimate
+  pr_auc_auc  <- pr_auc(df_binary, truth_bin, !!sym(class_objetive), event_level = "first")$.estimate
     
    tibble(
     Class = class_objetive,
-    Metric = c("Precision", "Recall", "F1-score", "ROC AUC", "PR AUC"),
-    Value = c(precision, recall, f1, roc_auc_auc, pr_auc_auc)
+    Metric = c("Precision", "Recall", "F1-score", "Accuracy","ROC AUC", "PR AUC"),
+    Value = c(precision, recall, f1, Accuracy_specific, roc_auc_auc, pr_auc_auc)
   )
 }
 
@@ -677,28 +633,21 @@ ggplot(results_per_classTidymodels, aes(x = Metric, y = Value, fill = Metric)) +
   theme_minimal(base_size = 8)
 ```
 
-```{r}
-plot(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROC)
-```
-
-```{r}
-library(gbm)
-
-varImp(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROC, scale = T)
-```
+#### Creation of ROC AUC and PR AUC plots:
 
 ```{r}
 library(pROC)
 
-result.predicted.prob <- predict(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROC,opt.Datos.Test.FinnishRecurtp53MMRdROC, type="prob") # Prediction
+result.predicted.prob <- predict(TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels
+,opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels, type="prob") # Prediction
 
-result.roc <- roc(opt.Datos.Test.FinnishRecurtp53MMRdROC$Clase, result.predicted.prob$EarlyRelapse) # Draw ROC curve.
+result.roc <- roc(opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk, result.predicted.prob$EarlyRelapse) # Draw ROC curve.
 plot(result.roc, print.thres="best", print.thres.best.method="closest.topleft")
 
 result.coords <- coords(result.roc, "best", best.method="closest.topleft", ret=c("threshold", "accuracy"))
 print(result.coords)#to get threshold and accuracy
 
-result.auc <- multiclass.roc(opt.Datos.Test.FinnishRecurtp53MMRdROC$Clase, result.predicted.prob) # Draw ROC curve.
+result.auc <- multiclass.roc(opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels$recurrence_risk, result.predicted.prob) # Draw ROC curve.
 
 AUCplotTP53MMRdRiskRecur <-
   par(pty = "s")
@@ -1033,7 +982,6 @@ FeatureSelectionHeatmap
 ```
 
 Best_varsTraditional <- sorted_variablesTraditional[1:22]
-"recurrence_risk" %in% Best_varsTraditional
 
 Best_varsTraditional <- setdiff(Best_varsTraditional, "recurrence_risk")
 
@@ -1069,7 +1017,7 @@ fit_finalTraditional %>% extract_fit_parsnip() %>% .$fit %>% names()
 set.seed(123)
 n_values = 10
 seeds <- vector(mode = "list", length = 11)
-for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_values)
 seeds[[11]] <- sample.int(1000, 1)
 
 f1 <- function(data, lev = NULL, model = NULL) {
@@ -1246,7 +1194,7 @@ knn_grid <- expand.grid(k = seq(3, 21, by = 2))
 
 ```{r}
 set.seed(123)
-n_valores = 10
+n_values = 10
 seeds <- vector(mode = "list", length = 11)
 for(i in 1:10) seeds[[i]] <- sample.int(1000, n_values)
 seeds[[11]] <- sample.int(1000, 1)
@@ -1324,7 +1272,7 @@ confusionMatrix(predict(TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCti
 
 ```{r}
 set.seed(123)
-n_valores = 10
+n_values = 10
 seeds <- vector(mode = "list", length = 11)
 for(i in 1:10) seeds[[i]] <- sample.int(1000, n_values)
 seeds[[11]] <- sample.int(1000, 1)
@@ -1833,7 +1781,6 @@ best_nESGO <- results_rfeESGO %>%
 cat("Best number of features according to F1-score:", best_nESGO, "\n")
 
 best_varsESGO <- sorted_variablesESGO[1:23]
-"recurrence_risk" %in% best_varsESGO
 
 best_varsESGO <- setdiff(best_varsESGO, "recurrence_risk")
 
@@ -2008,7 +1955,7 @@ knn_grid <- expand.grid(k = seq(3, 21, by = 2))
 
 ```{r}
 set.seed(123)
-n_valores = 10
+n_values = 10
 seeds <- vector(mode = "list", length = 11)
 for(i in 1:10) seeds[[i]] <- sample.int(1000, n_values)
 seeds[[11]] <- sample.int(1000, 1)
@@ -2423,7 +2370,6 @@ Best_nPOLE <- results_rfePOLE %>%
 cat("Best number of features according to F1-score:", results_rfePOLE, "\n")
 
 Best_varsPOLE <- sorted_variablesPOLE[1:28]
-"recurrence_risk" %in% Best_varsPOLE
 
 Best_varsPOLE <- setdiff(Best_varsPOLE, "recurrence_risk")
 
@@ -2431,7 +2377,7 @@ recipe_finalPOLE <- recipe(recurrence_risk ~ ., data = datos_trainPOLE) %>%
   step_normalize(all_numeric_predictors()) %>%
   step_dummy(all_nominal_predictors()) %>%
   update_role(recurrence_risk, new_role = "outcome") %>%
-  step_select(all_of(mejores_varsPOLE), starts_with("recurrence_risk")) %>%
+  step_select(all_of(Best_varsPOLE), starts_with("recurrence_risk")) %>%
   step_smote(recurrence_risk, skip = TRUE)
 
 prep(recipe_finalPOLE, training = datos_trainPOLE) %>% juice() %>% names() %>% any(. == "recurrence_risk")
@@ -4005,6 +3951,7 @@ intersectionsdataframe$item <- sapply(intersectionsdataframe$item, function(x) p
 
 #write.csv(intersectionsdataframe, "VennDiagramData.csv", row.names = FALSE)
 ```
+
 
 
 
