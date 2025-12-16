@@ -99,7 +99,7 @@ library(themis)
 library(readr)
 library(caret)
 
-DatasetRiskOfRecurrenceTP53MMRd <- read_csv("DatasetTP53MMRdRiskOfRecurrence.csv")
+#DatasetRiskOfRecurrenceTP53MMRd <- read_csv("DatasetTP53MMRdRiskOfRecurrence.csv")
 
 DatasetRiskOfRecurrenceTP53MMRd <- DatasetRiskOfRecurrenceTP53MMRd%>%
   mutate(across(where(is.character), as.factor))
@@ -125,19 +125,29 @@ datos_train <- datos_train %>%
 datos_test <- datos_test %>%
   mutate(across(where(is.character), as.factor))
 
+datos_Validation <- datos_Validation %>%
+  mutate(across(where(is.character), as.factor))
+
 datos_train <- datos_train %>%
   rename(recurrence_risk = `RecurrenceRisk`)
 
 datos_test <- datos_test %>%
   rename(recurrence_risk = `RecurrenceRisk`)
 
+datos_Validation <- datos_Validation %>%
+  rename(recurrence_risk = `RecurrenceRisk`)
+
 datos_train$recurrence_risk <- factor(datos_train$recurrence_risk)
 
 datos_test$recurrence_risk <- factor(datos_test$recurrence_risk, levels = levels(datos_train$recurrence_risk))
 
+datos_Validation$recurrence_risk <- factor(datos_Validation$recurrence_risk, levels = levels(datos_train$recurrence_risk))
+
 datos_train <- na.roughfix(datos_train)
 
 datos_test <- na.roughfix(datos_test)
+
+datos_Validation <- na.roughfix(datos_Validation)
 
 base_recipe <- recipe(recurrence_risk ~ ., data = datos_train) %>%
   step_zv(all_predictors()) %>%                      # Eliminates predictors without variation
@@ -199,8 +209,8 @@ results_rfe <- map_dfr(top_n_values, evaluate_with_top_n)
 #saveRDS(sorted_variables, "MoreToleastImportantFeaturesTP53MMRd.rds")
 #write.csv(results_rfe, "RFEresultsTP53MMRd.csv")
 
-results_rfe <- readRDS("RFEresultsTP53MMRd.rds")
-sorted_variables <- readRDS("MoreToleastImportantFeaturesTP53MMRd.rds")
+#results_rfe <- readRDS("RFEresultsTP53MMRd.rds")
+#sorted_variables <- readRDS("MoreToleastImportantFeaturesTP53MMRd.rds")
 
 best_n <- results_rfe %>%
   filter(.metric == "f_meas") %>%
@@ -240,6 +250,9 @@ names(datos_test_bake)
 
 fit_final %>% extract_fit_parsnip() %>% .$fit %>% names()
 ```
+
+
+
 
 #### Training with GBM:
 ```{r}
@@ -926,14 +939,13 @@ stability_per_foldTraditional <- stability_per_foldTraditional %>%
                           "HistologyandGrade_endometrioid.G3" = "Endometrioid G3",
                           "betacatenin_Positive" = "Positive betacatenin"))
 
-write.csv(stability_per_foldTraditional, "RFEstabilityPerFold.csv")
+#write.csv(stability_per_foldTraditional, "RFEstabilityPerFold.csv") #This is Supplementary table 3
 ```
-
 
 ```{r}
 library(tidyverse)
 
-# Create a matrix with fold × variable
+# Create a matrix with fold × variable to represent in a figure
 matrix_fold_variableTraditional <- vars_per_foldTraditional %>%
   mutate(selection = 1) %>%
   pivot_wider(
@@ -984,7 +996,7 @@ matrix_longTraditional <- matrix_longTraditional %>%
 
 
 ```{r}
-#Create the heatmap for RFE stability:
+#Create the heatmap for RFE stability (Supplementary Figure 2)
 FeatureSelectionHeatmap <- ggplot(matrix_longTraditional,
        aes(x = variable, y = fold, fill = selection)) +
   geom_tile(color = "white") +
@@ -3993,6 +4005,7 @@ intersectionsdataframe$item <- sapply(intersectionsdataframe$item, function(x) p
 
 #write.csv(intersectionsdataframe, "VennDiagramData.csv", row.names = FALSE)
 ```
+
 
 
 
