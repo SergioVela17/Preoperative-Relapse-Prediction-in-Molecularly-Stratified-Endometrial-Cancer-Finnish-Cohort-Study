@@ -1,0 +1,208 @@
+---
+title: "MultiSHAP Comparison"
+output: html_document
+date: "2025-12-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##### Multi SHAP comparison:
+
+```{r}
+library(caret)
+library(fastshap)
+library(shapviz)
+library(dplyr)
+
+set.seed(123)
+
+tuneGrid <- expand.grid(
+  n.trees = c(50, 100),
+  interaction.depth = c(1, 2),
+  shrinkage = c(0.05, 0.1),
+  n.minobsinnode = 10
+)
+
+df <- opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditional 
+
+df <- na.roughfix(df)
+
+df$recurrence_risk <- as.factor(df$recurrence_risk)
+n_clases <- length(levels(df$recurrence_risk ))
+n_clases
+classes <- levels(df$recurrence_risk )
+
+X <- df[, setdiff(names(df), "recurrence_risk")]
+y <- df$recurrence_risk 
+
+K <- 10
+R <- 10
+n_background <- 50 
+
+folds <- createMultiFolds(y, k = K, times = R)  
+
+index_folds <- lapply(folds, function(train_idx) {
+  list(
+    analysis = train_idx,
+    assessment = setdiff(seq_len(nrow(df)), train_idx)
+  )
+})
+
+safe_pred <- function(object, newdata, class_k) {
+  probs <- predict(object, newdata, type = "prob")
+  if (!(class_k %in% colnames(probs))) {
+    return(rep(0, nrow(newdata)))
+  }
+  out <- probs[, class_k]
+  out[is.na(out)] <- 0
+  out
+}
+
+results_folds <- list()
+
+for (i in seq_along(index_folds)) {
+  
+  cat("\n----------------------------------------\n")
+  cat("Fold", i, "of", length(index_folds), "\n")
+  
+  idx_train <- index_folds[[i]]$analysis
+  X_train <- X[idx_train, ]
+  y_train <- y[idx_train]
+  
+  tuneGrid <- expand.grid(
+    n.trees = 50,
+    interaction.depth = 2,
+    shrinkage = 0.05,
+    n.minobsinnode = 10
+  )
+  
+  model_fold <- train(
+    x = X_train,
+    y = y_train,
+    method = "gbm",
+    metric = "AUC",
+    tuneGrid = tuneGrid,
+    trControl = trainControl(
+      method = "none",
+      classProbs = TRUE,
+      summaryFunction = multiClassSummary
+    ),
+    verbose = FALSE
+  )
+  
+  shap_per_class <- list()
+  summary_per_class <- list()
+  
+  for (k in seq_along(classes)) {
+    
+    class_k <- classes[k]
+    cat("   Calculating SHAP for class:", class_k, "\n")
+    
+    f_pred <- function(object, newdata) {
+      probs <- predict(object, newdata, type = "prob")
+      if (!(class_k %in% colnames(probs))) {
+        return(rep(0, nrow(newdata)))
+      }
+      out <- probs[, class_k]
+      out[is.na(out)] <- 0
+      return(as.numeric(out))
+    }
+  
+    shap_vals <- try(fastshap::explain(
+      object = model_fold,
+      X = X_train,
+      pred_wrapper = f_pred,
+      nsim = 50 
+    ), silent = TRUE)
+    
+    if (inherits(shap_vals, "try-error")) {
+      warning(paste("fastshap failed in fold", i, "class", class_k))
+      next
+    }
+    
+    shap_per_class[[class_k]] <- shap_vals
+    
+    sspearman_k <- map_dfr(colnames(X_train), function(v) {
+
+  idx_class <- which(y_train == class_k)
+
+  x <- X_train[idx_class, v]
+  s <- as.numeric(shap_vals[idx_class, v])
+
+  if (length(unique(x)) < 3 || sd(s) == 0) {
+    return(data.frame(
+      variable = v,
+      rho_spearman = NA,
+      p_value = NA,
+      mean_abs_shap = NA
+    ))
+  }
+
+  test <- suppressWarnings(
+    cor.test(x, s, method = "spearman", exact = FALSE)
+  )
+
+  data.frame(
+    variable = v,
+    rho_spearman = unname(test$estimate),
+    p_value = test$p.value,
+    mean_abs_shap = mean(abs(s))
+  )
+})
+
+    summary_k <- sspearman_k %>%
+  mutate(class = class_k) %>%
+  arrange(desc(mean_abs_shap))
+    
+    summary_per_class[[class_k]] <- summary_k
+  }
+  
+  results_folds[[i]] <- list(
+    model = model_fold,
+    shap = shap_per_class,
+    summary = summary_per_class
+  )
+} 
+
+cat("\n✔ Loop completed.\n")
+
+results_folds
+```
+
+```{r}
+library(purrr)
+library(dplyr)
+
+spearman_all <- map_dfr(
+  seq_along(results_folds),
+  function(i) {
+    map_dfr(
+      names(results_folds[[i]]$summary),
+      function(cl) {
+        results_folds2[[i]]$summary[[cl]] %>%
+          mutate(
+            fold = i,
+            class = cl
+          )
+      }
+    )
+  }
+)
+```
+
+```{r}
+spearman_summary <- spearman_all %>%
+  group_by(class, variable) %>%
+  summarise(
+    mean_rho = mean(rho_spearman, na.rm = TRUE),
+    sd_rho   = sd(rho_spearman, na.rm = TRUE),
+    mean_shap = mean(mean_abs_shap, na.rm = TRUE),
+    n = sum(!is.na(rho_spearman)),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(abs(mean_rho)))
+
+spearman_summary
+```
