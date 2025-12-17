@@ -1,0 +1,33 @@
+# R Project Dependencies
+# 
+# To ensure reproducibility, please install the packages listed below 
+# using the specified version (or newer).
+# 
+# Install with: install.packages(c("readr", "dplyr", ...))
+
+R Version: 4.5.0
+
+Package Name (Required Version)
+-------------------------------
+readr (v2.1.5)
+dplyr (v1.1.4)
+caret (v7.0.1)
+randomForest (v4.7.1.2)
+tidyverse (v2.0.0)
+finalfit (v1.0.8)
+tidymodels (v1.3.0)
+vip (v0.4.1)
+themis (v1.0.3)
+MLmetrics (v1.1.3)
+yardstick (v1.3.2)
+ggplot2 (v3.5.2)
+tibble (v3.2.1)
+purrr (v1.0.1)
+rlang (v1.1.6)
+gbm (v2.2.2)
+pROC (v1.18.5)
+PRROC (v1.4)
+kernelshap (v0.9.0)
+shapviz (v0.9.7)
+reshape2 (v1.4.4)
+ggVennDiagram (v1.5.3)
