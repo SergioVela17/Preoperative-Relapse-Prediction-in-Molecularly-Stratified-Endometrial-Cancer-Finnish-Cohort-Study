@@ -4,9 +4,12 @@ This repository contains code for interpretable ML models predicting Endometrial
 
 Reproducibility
 Using R 4.5.0 and renv
+
 Clone: git clone https://github.com/SergioVela17/Preoperative-Relapse-Prediction-in-Molecularly-Stratified-Endometrial-Cancer-Finnish-Cohort-Study.git
 Restore: renv::restore()
+
 Run: source("FinnishProjectAnalyses.Rmd")
+
 Repository
 Link: https://github.com/SergioVela17/Preoperative-Relapse-Prediction-in-Molecularly-Stratified-Endometrial-Cancer-Finnish-Cohort-Study/blob/main/README.md
 Structure: /scripts/FinnishProjectAnalyses.Rmd, renv.lock, README.md
