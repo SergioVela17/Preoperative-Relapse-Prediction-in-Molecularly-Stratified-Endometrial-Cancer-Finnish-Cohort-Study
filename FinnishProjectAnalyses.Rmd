@@ -297,7 +297,7 @@ metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
 }
 
 set.seed(123)
-n_values = 10
+n_values = 486 
 seeds <- vector(mode = "list", length = 101)
 for(i in 1:100) seeds[[i]] <- sample.int(1000, n_values)
 seeds[[101]] <- sample.int(1000, 1)
@@ -332,8 +332,9 @@ opt.Datos.Test.FinnishRecurtp53MMRdROCtidymodels <- droplevels(opt.Datos.Test.Fi
 
 gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9), 
                         n.trees = (1:30)*50, 
-                        shrinkage = 0.1,
-                        n.minobsinnode = 20)
+                        shrinkage = c(0.01,0.05,0.1),
+                        n.minobsinnode = c(5,10,20),
+                        subsample = c(0.5, 0.8, 1.0))
 ```
 
 ```{r}
@@ -397,7 +398,7 @@ metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
 }
 
 set.seed(123)
-n_values = 10
+n_values = 19 
 seeds <- vector(mode = "list", length = 101)
 for(i in 1:100) seeds[[i]] <- sample.int(1000, n_values)
 seeds[[101]] <- sample.int(1000, 1)
@@ -461,6 +462,45 @@ confusionMatrix(predict(TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymo
 ```{r}
 knn_grid <- expand.grid(k = seq(3, 21, by = 2)) 
 ```
+
+```{r}
+library(pROC) 
+
+metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
+  
+  y_true <- data$obs
+  y_pred <- data$pred
+  y_prob <- data[[lev[1]]] 
+  
+  f1  <- F1_Score(y_true = y_true, y_pred = y_pred, positive = lev[1])
+  acc <- Accuracy(y_true = y_true, y_pred = y_pred)
+  sens <- Sensitivity(y_true = y_true, y_pred = y_pred, positive = lev[1])
+  auc <- auc(y_true, y_prob)
+  
+  c(F1 = f1, AUC = as.numeric(auc), Sensitivity = sens, Accuracy = acc)
+}
+
+set.seed(123)
+n_values = 10 
+seeds <- vector(mode = "list", length = 101)
+for(i in 1:100) seeds[[i]] <- sample.int(1000, n_values)
+seeds[[101]] <- sample.int(1000, 1)
+
+fitControl <- trainControl(## 10-fold repeated CV
+                           method = "repeatedcv",
+                           number = 10,
+                           repeats = 10,    ## repeated ten times
+                           seeds = seeds,
+                           returnResamp = "final",
+                           search = "grid",
+                           verboseIter=FALSE,
+                           allowParallel = TRUE,
+                           classProbs = T,
+                           summaryFunction = metrics_mlmetrics)
+
+fitControl$sampling <- "smote"
+```
+
 ```{r}
 set.seed(342)
 TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels,
@@ -1048,7 +1088,7 @@ metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
 }
 
 set.seed(123)
-n_values = 10
+n_values = 486 
 seeds <- vector(mode = "list", length = 101)
 for(i in 1:100) seeds[[i]] <- sample.int(1000, n_values)
 seeds[[101]] <- sample.int(1000, 1)
@@ -1083,8 +1123,9 @@ opt.Datos.Test.FinnishRecurTraditionaltidymodels <- droplevels(opt.Datos.Test.Fi
 
 gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9), 
                         n.trees = (1:30)*50, 
-                        shrinkage = 0.1,
-                        n.minobsinnode = 20)
+                        shrinkage = c(0.01,0.05,0.1),
+                        n.minobsinnode = c(5,10,20),
+                        subsample = c(0.5, 0.8, 1.0))
 ```
 
 ```{r}
@@ -1147,7 +1188,7 @@ metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
 }
 
 set.seed(123)
-n_values = 10
+n_values = 22
 seeds <- vector(mode = "list", length = 101)
 for(i in 1:100) seeds[[i]] <- sample.int(1000, n_values)
 seeds[[101]] <- sample.int(1000, 1)
@@ -1830,7 +1871,7 @@ metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
 }
 
 set.seed(123)
-n_values = 10
+n_values = 486 
 seeds <- vector(mode = "list", length = 101)
 for(i in 1:100) seeds[[i]] <- sample.int(1000, n_values)
 seeds[[101]] <- sample.int(1000, 1)
@@ -1865,8 +1906,9 @@ opt.Datos.Test.FinnishRecurESGOtidymodels <- droplevels(opt.Datos.Test.FinnishRe
 
 gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9), 
                         n.trees = (1:30)*50, 
-                        shrinkage = 0.1,
-                        n.minobsinnode = 20)
+                        shrinkage = c(0.01,0.05,0.1),
+                        n.minobsinnode = c(5,10,20),
+                        subsample = c(0.5, 0.8, 1.0))
 ```
 
 ```{r}
@@ -1910,6 +1952,44 @@ confusionMatrix(predict(ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodel
 ```
 
 #### Rf:
+
+```{r}
+library(pROC) 
+
+metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
+  
+  y_true <- data$obs
+  y_pred <- data$pred
+  y_prob <- data[[lev[1]]] 
+  
+  f1  <- F1_Score(y_true = y_true, y_pred = y_pred, positive = lev[1])
+  acc <- Accuracy(y_true = y_true, y_pred = y_pred)
+  sens <- Sensitivity(y_true = y_true, y_pred = y_pred, positive = lev[1])
+  auc <- auc(y_true, y_prob)
+  
+  c(F1 = f1, AUC = as.numeric(auc), Sensitivity = sens, Accuracy = acc)
+}
+
+set.seed(123)
+n_values = 23 
+seeds <- vector(mode = "list", length = 101)
+for(i in 1:100) seeds[[i]] <- sample.int(1000, n_values)
+seeds[[101]] <- sample.int(1000, 1)
+
+fitControl <- trainControl(## 10-fold repeated CV
+                           method = "repeatedcv",
+                           number = 10,
+                           repeats = 10,    ## repeated ten times
+                           seeds = seeds,
+                           returnResamp = "final",
+                           search = "grid",
+                           verboseIter=FALSE,
+                           allowParallel = TRUE,
+                           classProbs = T,
+                           summaryFunction = metrics_mlmetrics)
+
+fitControl$sampling <- "smote"
+```
 
 ```{r}
 rfGrid <-  expand.grid(mtry = (1:23))
@@ -2322,7 +2402,7 @@ evaluate_with_top_nPOLE <- function(n) {
     mutate(num_vars = n_local)
 }
 
-top_n_values <- c(5:35)
+top_n_values <- c(5:30)
 
 results_rfePOLE <- map_dfr(top_n_values, evaluate_with_top_nPOLE)
 
@@ -2389,7 +2469,7 @@ metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
 }
 
 set.seed(123)
-n_values = 10
+n_values = 486
 seeds <- vector(mode = "list", length = 101)
 for(i in 1:100) seeds[[i]] <- sample.int(1000, n_values)
 seeds[[101]] <- sample.int(1000, 1)
@@ -2424,8 +2504,9 @@ opt.Datos.Test.FinnishRecurPOLEtidymodels <- droplevels(opt.Datos.Test.FinnishRe
 
 gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9), 
                         n.trees = (1:30)*50, 
-                        shrinkage = 0.1,
-                        n.minobsinnode = 20)
+                        shrinkage = c(0.01,0.05,0.1),
+                        n.minobsinnode = c(5,10,20),
+                        subsample = c(0.5, 0.8, 1.0))
 ```
 
 ```{r}
@@ -2488,7 +2569,7 @@ metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
 }
 
 set.seed(123)
-n_values = 10
+n_values = 28
 seeds <- vector(mode = "list", length = 101)
 for(i in 1:100) seeds[[i]] <- sample.int(1000, n_values)
 seeds[[101]] <- sample.int(1000, 1)
@@ -3836,6 +3917,7 @@ intersectionsdataframe$item <- sapply(intersectionsdataframe$item, function(x) p
 
 #write.csv(intersectionsdataframe, "VennDiagramData.csv", row.names = FALSE) #This is Supplementary Table 5
 ```
+
 
 
 
