@@ -297,9 +297,9 @@ metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
 }
 
 set.seed(123)
-n_values = 486 
+n_values = 2430 
 seeds <- vector(mode = "list", length = 101)
-for(i in 1:100) seeds[[i]] <- sample.int(1000, n_values)
+for(i in 1:100) seeds[[i]] <- sample.int(10000, n_values)
 seeds[[101]] <- sample.int(1000, 1)
 
 fitControl <- trainControl(## 10-fold repeated CV
@@ -1088,9 +1088,9 @@ metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
 }
 
 set.seed(123)
-n_values = 486 
+n_values = 2430 
 seeds <- vector(mode = "list", length = 101)
-for(i in 1:100) seeds[[i]] <- sample.int(1000, n_values)
+for(i in 1:100) seeds[[i]] <- sample.int(10000, n_values)
 seeds[[101]] <- sample.int(1000, 1)
 
 fitControl <- trainControl(## 10-fold repeated CV
@@ -1871,9 +1871,9 @@ metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
 }
 
 set.seed(123)
-n_values = 486 
+n_values = 2430 
 seeds <- vector(mode = "list", length = 101)
-for(i in 1:100) seeds[[i]] <- sample.int(1000, n_values)
+for(i in 1:100) seeds[[i]] <- sample.int(10000, n_values)
 seeds[[101]] <- sample.int(1000, 1)
 
 fitControl <- trainControl(## 10-fold repeated CV
@@ -2469,9 +2469,9 @@ metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
 }
 
 set.seed(123)
-n_values = 486
+n_values = 2430
 seeds <- vector(mode = "list", length = 101)
-for(i in 1:100) seeds[[i]] <- sample.int(1000, n_values)
+for(i in 1:100) seeds[[i]] <- sample.int(10000, n_values)
 seeds[[101]] <- sample.int(1000, 1)
 
 fitControl <- trainControl(## 10-fold repeated CV
@@ -3917,6 +3917,7 @@ intersectionsdataframe$item <- sapply(intersectionsdataframe$item, function(x) p
 
 #write.csv(intersectionsdataframe, "VennDiagramData.csv", row.names = FALSE) #This is Supplementary Table 5
 ```
+
 
 
 
