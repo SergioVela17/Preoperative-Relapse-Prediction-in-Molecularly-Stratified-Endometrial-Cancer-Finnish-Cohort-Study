@@ -29,9 +29,13 @@ df <- opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditional
 
 df <- na.roughfix(df)
 
+df <- df %>%
+  mutate(across(where(is.numeric), ~ if (all(na.omit(.) %in% c(0, 1))) factor(.) else .
+  ))
+
 df$recurrence_risk <- as.factor(df$recurrence_risk)
-n_clases <- length(levels(df$recurrence_risk ))
-n_clases
+n_classes <- length(levels(df$recurrence_risk ))
+n_classes
 classes <- levels(df$recurrence_risk )
 
 X <- df[, setdiff(names(df), "recurrence_risk")]
@@ -131,7 +135,7 @@ for (i in seq_along(index_folds)) {
   x <- X_train[idx_class, v]
   s <- as.numeric(shap_vals[idx_class, v])
 
-  if (length(unique(x)) < 3 || sd(s) == 0) {
+  if (length(unique(x)) < 2 || sd(s) == 0) {
     return(data.frame(
       variable = v,
       rho_spearman = NA,
@@ -141,7 +145,7 @@ for (i in seq_along(index_folds)) {
   }
 
   test <- suppressWarnings(
-    cor.test(x, s, method = "spearman", exact = FALSE)
+    cor.test(x, s, method = "spearman", exact = FALSE)   #Spearman calculation intra-fold
   )
 
   data.frame(
@@ -172,37 +176,53 @@ results_folds
 ```
 
 ```{r}
-library(purrr)
-library(dplyr)
+#Spearman calculation inter-folds
 
-spearman_all <- map_dfr(
-  seq_along(results_folds),
-  function(i) {
-    map_dfr(
-      names(results_folds[[i]]$summary),
-      function(cl) {
-        results_folds2[[i]]$summary[[cl]] %>%
-          mutate(
-            fold = i,
-            class = cl
-          )
-      }
-    )
+spearman_between_folds <- list()
+
+for (class_k in classes) {
+  shap_class_list <- lapply(results_folds, function(fold) fold$shap[[class_k]])
+  
+  n_folds <- length(shap_class_list)
+  corr_matrix <- matrix(NA, nrow = n_folds, ncol = n_folds)
+  rownames(corr_matrix) <- paste0("Fold_", 1:n_folds)
+  colnames(corr_matrix) <- paste0("Fold_", 1:n_folds)
+  
+  for (i in 1:n_folds) {
+    for (j in i:n_folds) {
+      fold_i <- shap_class_list[[i]]
+      fold_j <- shap_class_list[[j]]
+      
+      common_vars <- intersect(colnames(fold_i), colnames(fold_j))
+      fold_i <- fold_i[, common_vars, drop = FALSE]
+      fold_j <- fold_j[, common_vars, drop = FALSE]
+      
+      n_patients <- min(nrow(fold_i), nrow(fold_j))
+      vec_i <- as.numeric(as.matrix(fold_i[1:n_patients, ]))
+      vec_j <- as.numeric(as.matrix(fold_j[1:n_patients, ]))
+      
+      corr_matrix[i,j] <- cor(vec_i, vec_j, method = "spearman", use = "pairwise.complete.obs")
+      corr_matrix[j,i] <- corr_matrix[i,j]
+    }
   }
-)
+  
+  spearman_between_folds[[class_k]] <- corr_matrix
+}
+
+spearman_between_folds[["EarlyRelapse"]]
 ```
 
 ```{r}
-spearman_summary <- spearman_all %>%
-  group_by(class, variable) %>%
-  summarise(
-    mean_rho = mean(rho_spearman, na.rm = TRUE),
-    sd_rho   = sd(rho_spearman, na.rm = TRUE),
-    mean_shap = mean(mean_abs_shap, na.rm = TRUE),
-    n = sum(!is.na(rho_spearman)),
-    .groups = "drop"
-  ) %>%
-  arrange(desc(abs(mean_rho)))
-
-spearman_summary
+mat_EarlyRelapse <- spearman_between_folds[["EarlyRelapse"]]
+mean_corr_EarlyRelapse <- mean(mat_EarlyRelapse[upper.tri(mat_EarlyRelapse)])
+sd_corr_EarlyRelapse <- sd(mat_EarlyRelapse[upper.tri(mat_EarlyRelapse)])
+cat("Mean Spearman between folds for Early Relapse:", mean_corr_EarlyRelapse, "\nSD:", sd_corr_EarlyRelapse, "\n")
 ```
+
+```{r}
+sapply(classes, function(class_k) {
+  mat <- spearman_between_folds[[class_k]]
+  mean(mat[upper.tri(mat)])
+})
+```
+
