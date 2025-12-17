@@ -338,7 +338,7 @@ gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9),
 ```
 
 ```{r}
-set.seed(342)
+set.seed(123)
 TP53MMRdRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels,
                             method="gbm",
                             trControl=fitControl,
@@ -421,7 +421,7 @@ fitControl$sampling <- "smote"
 ```{r}
 rfGrid <-  expand.grid(mtry = (1:19))
 
-set.seed(342)
+set.seed(123)
 TP53MMRdRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels,
                             method="rf",
                             verbose = FALSE,
@@ -502,7 +502,7 @@ fitControl$sampling <- "smote"
 ```
 
 ```{r}
-set.seed(342)
+set.seed(123)
 TP53MMRdRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels,
                             method="knn",
                             verbose = FALSE,
@@ -571,7 +571,7 @@ fitControlSVM <- trainControl(
 ```
 
 ```{r}
-set.seed(342)
+set.seed(123)
 TP53MMRdRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurtp53MMRdROCtidymodels,
                             method="svmRadial",
                             trControl=fitControlSVM  ,
@@ -1129,7 +1129,7 @@ gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9),
 ```
 
 ```{r}
-set.seed(342)
+set.seed(123)
 TraditionalRiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurTraditionaltidymodels,
                             method="gbm",
                             trControl=fitControl,
@@ -1211,7 +1211,7 @@ fitControl$sampling <- "smote"
 ```{r}
 rfGrid <-  expand.grid(mtry = (1:22))
 
-set.seed(342)
+set.seed(123)
 TraditionalRiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurTraditionaltidymodels,
                             method="rf",
                             tuneGrid = rfGrid,
@@ -1291,7 +1291,7 @@ fitControl$sampling <- "smote"
 ```
 
 ```{r}
-set.seed(342)
+set.seed(123)
 TraditionalRiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurTraditionaltidymodels,
                             method="knn",
                             trControl=fitControl,
@@ -1359,7 +1359,7 @@ fitControlSVM <- trainControl(
 ```
 
 ```{r}
-set.seed(342)
+set.seed(123)
 TraditionalRiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurTraditionaltidymodels,
                             method="svmRadial",
                             trControl=fitControlSVM,
@@ -1912,7 +1912,7 @@ gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9),
 ```
 
 ```{r}
-set.seed(342)
+set.seed(123)
 ESGORiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurESGOtidymodels,
                             method="gbm",
                             trControl=fitControl,
@@ -1994,7 +1994,7 @@ fitControl$sampling <- "smote"
 ```{r}
 rfGrid <-  expand.grid(mtry = (1:23))
 
-set.seed(342)
+set.seed(123)
 ESGORiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurESGOtidymodels,
                             method="rf",
                             tuneGrid = rfGrid,
@@ -2075,7 +2075,7 @@ fitControl$sampling <- "smote"
 ```
 
 ```{r}
-set.seed(342)
+set.seed(123)
 ESGORiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurESGOtidymodels,
                             method="knn",
                             trControl=fitControl,
@@ -2143,7 +2143,7 @@ fitControlSVM <- trainControl(
 ```
 
 ```{r}
-set.seed(342)
+set.seed(123)
 ESGORiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurESGOtidymodels,
                             method="svmRadial",
                             trControl=fitControlSVM  ,
@@ -2373,7 +2373,7 @@ sorted_variablesPOLE <- vip_valsPOLE %>%
 
 cv_foldsPOLE <- vfold_cv(datos_trainPOLE, v = 5, strata = recurrence_risk)
 
-set.seed(345)
+set.seed(123)
 evaluate_with_top_nPOLE <- function(n) {
   print(n)
   n_local <- n
@@ -2510,7 +2510,7 @@ gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9),
 ```
 
 ```{r}
-set.seed(342)
+set.seed(123)
 POLERiskOfRecurrenceDef.gbm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurPOLEtidymodels,
                             method="gbm",
                             trControl=fitControl,
@@ -2592,7 +2592,7 @@ fitControl$sampling <- "smote"
 ```{r}
 rfGrid <-  expand.grid(mtry = (1:28))
 
-set.seed(342)
+set.seed(123)
 POLERiskOfRecurrenceDef.rf.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurPOLEtidymodels,
                             method="rf",
                             tuneGrid = rfGrid,
@@ -2673,7 +2673,7 @@ fitControl$sampling <- "smote"
 ```
 
 ```{r}
-set.seed(342)
+set.seed(123)
 POLERiskOfRecurrenceDef.knn.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurPOLEtidymodels,
                             method="knn",
                             trControl=fitControl,
@@ -2740,7 +2740,7 @@ fitControlSVM <- trainControl(
 )
 ```
 ```{r}
-set.seed(342)
+set.seed(123)
 POLERiskOfRecurrenceDef.svm.cv.10.tuneLengthROCtidymodels <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurPOLEtidymodels,
                             method="svmRadial",
                             trControl=fitControlSVM  ,
@@ -3917,6 +3917,7 @@ intersectionsdataframe$item <- sapply(intersectionsdataframe$item, function(x) p
 
 #write.csv(intersectionsdataframe, "VennDiagramData.csv", row.names = FALSE) #This is Supplementary Table 5
 ```
+
 
 
 
