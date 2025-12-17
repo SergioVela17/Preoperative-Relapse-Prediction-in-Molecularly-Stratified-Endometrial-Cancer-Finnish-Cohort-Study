@@ -237,7 +237,7 @@ gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9),
                         n.minobsinnode = c(5,10,20),
                         subsample = c(0.5, 0.8, 1.0))
                         
-set.seed(342)
+set.seed(123)
 gbmFit2TP53tidymodelsTraditionalTemporal <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal, 
                  method = "gbm", 
                  trControl = fitControl, 
@@ -485,7 +485,7 @@ gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9),
                         n.minobsinnode = c(5,10,20),
                         subsample = c(0.5, 0.8, 1.0))
                         
-set.seed(342)
+set.seed(123)
 gbmFit2TP53tidymodelsPOLETemporal <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal, 
                  method = "gbm", 
                  trControl = fitControl, 
@@ -525,5 +525,6 @@ MLmetrics::F1_Score(predict(gbmFit2TP53tidymodelsPOLETemporal,opt.Datos.Test.Fin
 ```{r}
 confusionMatrix(predict(gbmFit2TP53tidymodelsPOLETemporal,opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal),opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal$recurrence_risk)
 ```
+
 
 
