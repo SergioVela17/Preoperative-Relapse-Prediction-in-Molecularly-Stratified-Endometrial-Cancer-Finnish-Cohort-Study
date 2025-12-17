@@ -1,0 +1,526 @@
+---
+title: "TemporalValidation"
+output: html_document
+date: "2025-12-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+###Temporal training - Traditional:
+
+```{r}
+#DatasetRiskOfRecurrenceTraditional <- read_csv("DatasetTraditionalRiskOfRecurrence.csv")
+
+DatasetRiskOfRecurrenceTraditionalTemporal <- DatasetRiskOfRecurrenceTraditional%>%
+  mutate(across(where(is.character), as.factor))
+```
+
+```{r}
+DatasetTraditionalRiskOfRecurrenceTrainingTest <- DatasetRiskOfRecurrenceTraditionalTemporal %>%
+  dplyr::filter(Time != "2012")
+
+DatasetTraditionalRiskOfRecurrenceValidation <- DatasetRiskOfRecurrenceTraditionalTemporal %>%
+  dplyr::filter(Time == "2012")
+```
+
+```{r}
+# install.packages(c("tidymodels", "vip", "themis"))
+
+library(tidymodels)
+library(vip)
+library(themis)
+
+DatasetTraditionalRiskOfRecurrenceTrainingTest <- DatasetTraditionalRiskOfRecurrenceTrainingTest %>%
+  dplyr::select(!Time)  
+
+datos_ValidationTraditionalTemporal <- DatasetTraditionalRiskOfRecurrenceValidation %>%
+  dplyr::select(!Time)  
+
+recipeTraditionalTemporal <- recipe(RecurrenceRisk ~ ., data =DatasetTraditionalRiskOfRecurrenceTrainingTest) %>%
+  step_zv(all_predictors()) %>%    
+  step_dummy(all_nominal_predictors())     # Convert factors to dummies
+    
+set.seed(123)
+splitTraditionalTemporal <- initial_split(DatasetTraditionalRiskOfRecurrenceTrainingTest, prop = 0.8, strata = RecurrenceRisk)
+datos_trainTraditionalTemporal <- training(splitTraditionalTemporal)
+datos_testTraditionalTemporal  <- testing(splitTraditionalTemporal)
+
+
+datos_trainTraditionalTemporal$RecurrenceRisk <- factor(datos_trainTraditionalTemporal$RecurrenceRisk)
+datos_testTraditionalTemporal$RecurrenceRisk <- factor(datos_testTraditionalTemporal$RecurrenceRisk, levels = levels(datos_trainTraditionalTemporal$RecurrenceRisk))
+
+datos_ValidationTraditionalTemporal$RecurrenceRisk <- factor(datos_ValidationTraditionalTemporal$RecurrenceRisk, levels = levels(datos_trainTraditionalTemporal$RecurrenceRisk))
+
+datos_trainTraditionalTemporal <- datos_trainTraditionalTemporal %>%
+  rename(recurrence_risk = `RecurrenceRisk`)
+
+datos_testTraditionalTemporal <- datos_testTraditionalTemporal %>%
+  rename(recurrence_risk = `RecurrenceRisk`)
+
+datos_ValidationTraditionalTemporal <- datos_ValidationTraditionalTemporal %>%
+  rename(recurrence_risk = `RecurrenceRisk`)
+
+datos_trainTraditionalTemporal <- datos_trainTraditionalTemporal%>%
+  mutate(across(where(is.character), as.factor))
+
+datos_testTraditionalTemporal <- datos_testTraditionalTemporal%>%
+  mutate(across(where(is.character), as.factor))
+
+datos_ValidationTraditionalTemporal <- datos_ValidationTraditionalTemporal%>%
+  mutate(across(where(is.character), as.factor))
+
+datos_trainTraditionalTemporal <- na.roughfix(datos_trainTraditionalTemporal)
+
+datos_testTraditionalTemporal <- na.roughfix(datos_testTraditionalTemporal)
+
+datos_ValidationTraditionalTemporal <- na.roughfix(datos_ValidationTraditionalTemporal)
+
+base_recipeTraditionalTemporal <- recipe(recurrence_risk ~ ., data = datos_trainTraditionalTemporal) %>%
+  step_zv(all_predictors()) %>%                      
+  step_normalize(all_numeric_predictors()) %>%   
+  step_dummy(all_nominal_predictors())           
+
+base_recipepreparedTraditionalTemporal <- prep(base_recipeTraditionalTemporal, training = datos_trainTraditionalTemporal, retain = TRUE)
+
+preprocessed_dataTraditionalTemporal <- juice(base_recipepreparedTraditionalTemporal)
+
+model_rfTraditionalTemporal <- rand_forest(mode = "classification", trees = 500) %>%
+  set_engine("ranger", importance = "impurity")
+
+model_baseTraditionalTemporal <- model_rfTraditionalTemporal %>%
+  fit(recurrence_risk ~ ., data = preprocessed_dataTraditionalTemporal)
+
+vip_valsTraditionalTemporal <- model_baseTraditionalTemporal %>% vi()
+
+sorted_variablesTraditionalTemporal <- vip_valsTraditionalTemporal %>%
+  arrange(desc(Importance)) %>%
+  pull(Variable)
+
+cv_foldsTraditionalTemporal <- vfold_cv(datos_trainTraditionalTemporal, v = 5, strata = recurrence_risk)
+
+evaluate_with_top_nTraditionalTemporal <- function(n) {
+  print(n)
+  n_local <- n
+  top_varsTraditional <- sorted_variablesTraditionalTemporal[1:n_local]
+  top_varsTraditional <- union(top_varsTraditional, "recurrence_risk")
+  
+  recipe_rfeTraditionalTemporal <- recipe(recurrence_risk ~ ., data = datos_trainTraditionalTemporal) %>%
+    step_zv(all_predictors()) %>%
+    step_normalize(all_numeric_predictors()) %>%
+    step_dummy(all_nominal_predictors()) %>%
+    step_smote(recurrence_risk) %>%
+    step_select(all_of(top_varsTraditional))
+  
+  wf <- workflow() %>%
+    add_model(model_rfTraditionalTemporal) %>%
+    add_recipe(recipe_rfeTraditionalTemporal)  
+
+  res <- fit_resamples(
+    wf,
+    resamples = cv_foldsTraditionalTemporal,
+    metrics = metric_set(accuracy, f_meas, kap, roc_auc, pr_auc),
+    control = control_resamples(save_pred = TRUE)
+  )
+  
+  collect_metrics(res) %>%
+    mutate(num_vars = n_local)
+}
+
+top_n_valuesTraditionalTemporal <- c(5:30)
+
+results_rfeTraditionalTemporal <- map_dfr(top_n_valuesTraditionalTemporal, evaluate_with_top_nTraditionalTemporal)
+
+#saveRDS(results_rfeTraditionalTemporal, "results_rfeTraditionalTemporal.rds")
+#saveRDS(sorted_variablesTraditionalTemporal, "MoreToleastImportantFeaturesTraditionalTemporal.rds")
+#write.csv(results_rfeTraditionalTemporal, "results_rfeTraditionalTemporal.csv")
+
+#results_rfeTraditionalTemporal <- readRDS("results_rfeTraditionalTemporal.rds")
+#sorted_variablesTraditionalTemporal <- readRDS("MoreToleastImportantFeaturesTraditionalTemporal.rds")
+
+best_nTraditionalTemporal <- results_rfeTraditionalTemporal %>%
+  filter(.metric == "f_meas") %>%
+  arrange(desc(mean)) %>%
+  slice(1) %>%
+  pull(num_vars)
+
+cat("Best features subset according to F1-score:", best_nTraditionalTemporal, "\n")
+
+best_varsTraditionalTemporal <- sorted_variablesTraditionalTemporal[1:17]
+
+best_varsTraditionalTemporal <- setdiff(best_varsTraditionalTemporal, "recurrence_risk")
+
+recipe_finalTraditionalTemporal <- recipe(recurrence_risk ~ ., data = datos_trainTraditionalTemporal) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  update_role(recurrence_risk, new_role = "outcome") %>%
+  step_select(all_of(best_varsTraditionalTemporal), starts_with("recurrence_risk")) %>%
+  step_smote(recurrence_risk, skip = TRUE)
+
+prep(recipe_finalTraditionalTemporal, training = datos_trainTraditionalTemporal) %>% juice() %>% names() %>% any(. == "recurrence_risk")
+
+wf_finalTraditionalTemporal <- workflow() %>%
+  add_model(model_rfTraditionalTemporal) %>%
+  add_recipe(recipe_finalTraditionalTemporal)
+
+fit_finalTraditionalTemporal <- fit(
+  wf_finalTraditionalTemporal,
+  data = datos_trainTraditionalTemporal)
+
+recipe_evalTraditionalTemporal <- recipe_finalTraditionalTemporal %>% prep(training = datos_trainTraditionalTemporal, retain = TRUE)
+datos_train_bakeTraditionalTemporal <- bake(recipe_evalTraditionalTemporal, new_data = datos_trainTraditionalTemporal)
+datos_test_bakeTraditionalTemporal <- bake(recipe_evalTraditionalTemporal, new_data = datos_testTraditionalTemporal)
+
+datos_Validation_bakeTraditionalTemporal <- bake(recipe_evalTraditionalTemporal, new_data = datos_ValidationTraditionalTemporal)
+```
+
+#### Training for ROC:
+
+```{r}
+library(pROC) 
+
+metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
+  
+  y_true <- data$obs
+  y_pred <- data$pred
+  y_prob <- data[[lev[1]]]   
+  
+  f1  <- F1_Score(y_true = y_true, y_pred = y_pred, positive = lev[1])
+  acc <- Accuracy(y_true = y_true, y_pred = y_pred)
+  sens <- Sensitivity(y_true = y_true, y_pred = y_pred, positive = lev[1])
+  auc <- auc(y_true, y_prob)
+  
+  c(F1 = f1, AUC = as.numeric(auc), Sensitivity = sens, Accuracy = acc)
+}
+
+set.seed(123)
+n_values = 10
+seeds2 <- vector(mode = "list", length = 101)
+for(i in 1:100) seeds2[[i]] <- sample.int(1000, n_values)
+seeds2[[101]] <- sample.int(1000, 1)
+
+fitControl <- trainControl(## 10-fold CV
+                           method = "repeatedcv",
+                           number = 10,
+                           ## repeated ten times
+                           repeats = 10,
+                           seeds = seeds2,
+                           returnResamp = "final",
+                           search = "grid",
+                           verboseIter=FALSE,
+                           allowParallel = TRUE,
+                           classProbs = T,
+                           summaryFunction = metrics_mlmetrics)
+
+fitControl$sampling <- "smote"
+```
+
+```{r}
+opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal <- datos_train_bakeTraditionalTemporal
+
+levels(opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal$recurrence_risk) <- c("EarlyRelapse", "LateRelpase","NoRelapse")
+
+opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal <- droplevels(opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal)
+
+opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal <- datos_test_bakeTraditionalTemporal
+
+levels(opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal$recurrence_risk) <- c("EarlyRelapse", "LateRelpase","NoRelapse")
+
+opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal <- droplevels(opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal)
+```
+
+```{r}
+gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9), 
+                        n.trees = (1:17)*50, 
+                        shrinkage = 0.1,
+                        n.minobsinnode = 20)
+                        
+set.seed(342)
+gbmFit2TP53tidymodelsTraditionalTemporal <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal, 
+                 method = "gbm", 
+                 trControl = fitControl, 
+                 verbose = FALSE, 
+                 tuneGrid = gbmGrid,
+                 metric="AUC")
+
+gbmFit2TP53tidymodelsTraditionalTemporal
+
+ic_f1TraditionalTemporal  <- quantile(gbmFit2TP53tidymodelsTraditionalTemporal$resample$F1, c(.025, .975), na.rm = TRUE)
+ic_aucTraditionalTemporal <- quantile(gbmFit2TP53tidymodelsTraditionalTemporal$resample$AUC, c(.025, .975), na.rm = TRUE)
+ic_senTraditionalTemporal <- quantile(gbmFit2TP53tidymodelsTraditionalTemporal$resample$Sensitivity, c(.025, .975), na.rm = TRUE)
+ic_accTraditionalTemporal <- quantile(gbmFit2TP53tidymodelsTraditionalTemporal$resample$Accuracy, c(.025, .975), na.rm = TRUE)
+
+#saveRDS(gbmFit2TP53tidymodelsTraditionalTemporal, "gbmFit2TP53tidymodelsTraditionalTemporal.rds")
+#saveRDS(opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal, "opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal.rds")
+#saveRDS(opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal, "opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal.rds")
+
+#opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal <- readRDS("opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal.rds")
+
+#opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal <- readRDS("opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal.rds")
+
+#gbmFit2TP53tidymodelsTraditionalTemporal <- readRDS("gbmFit2TP53tidymodelsTraditionalTemporal.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(gbmFit2TP53tidymodelsTraditionalTemporal,opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal),opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(gbmFit2TP53tidymodelsTraditionalTemporal,opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal),opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal$recurrence_risk)
+
+MLmetrics::F1_Score(predict(gbmFit2TP53tidymodelsTraditionalTemporal,opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal),opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal$recurrence_risk)
+
+MLmetrics::Accuracy(predict(gbmFit2TP53tidymodelsTraditionalTemporal,opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal),opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(gbmFit2TP53tidymodelsTraditionalTemporal,opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal),opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal$recurrence_risk)
+
+MLmetrics::F1_Score(predict(gbmFit2TP53tidymodelsTraditionalTemporal,opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal),opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(gbmFit2TP53tidymodelsTraditionalTemporal,opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal),opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal$recurrence_risk)
+```
+
+###Temporal training - POLE:
+
+```{r}
+DatasetRiskOfRecurrencePOLE <- read_csv("DatasetPOLERiskOfRecurrence.csv")
+
+DatasetRiskOfRecurrencePOLE <- DatasetRiskOfRecurrencePOLE %>%
+  mutate(across(where(is.character), as.factor))
+```
+
+```{r}
+DatasetRiskOfRecurrencePOLETrainingTest <- DatasetRiskOfRecurrencePOLE %>%
+  dplyr::filter(Time != "2012")
+
+DatasetRiskOfRecurrencePOLEValidation <- DatasetRiskOfRecurrencePOLE %>%
+  dplyr::filter(Time == "2012")
+```
+
+```{r}
+# install.packages(c("tidymodels", "vip", "themis"))
+
+library(tidymodels)
+library(vip)
+library(themis)
+
+DatasetRiskOfRecurrencePOLETrainingTest <- DatasetRiskOfRecurrencePOLETrainingTest %>%
+  dplyr::select(!Time)
+
+datos_ValidationPOLETemporal <- DatasetRiskOfRecurrencePOLEValidation %>%
+  dplyr::select(!Time)
+
+recipePOLETemporal <- recipe(RecurrenceRisk ~ ., data =DatasetRiskOfRecurrencePOLETrainingTest) %>%
+  step_zv(all_predictors()) %>%    
+  step_dummy(all_nominal_predictors())     # Create dummies from factor features
+    
+set.seed(123)
+splitPOLETemporal <- initial_split(DatasetRiskOfRecurrencePOLETrainingTest, prop = 0.8, strata = RecurrenceRisk)
+datos_trainPOLETemporal <- training(splitPOLETemporal)
+datos_testPOLETemporal  <- testing(splitPOLETemporal)
+
+datos_trainPOLETemporal$RecurrenceRisk <- factor(datos_trainPOLETemporal$RecurrenceRisk)
+datos_testPOLETemporal$RecurrenceRisk <- factor(datos_testPOLETemporal$RecurrenceRisk, levels = levels(datos_trainPOLETemporal$RecurrenceRisk))
+
+datos_ValidationPOLETemporal$RecurrenceRisk <- factor(datos_ValidationPOLETemporal$RecurrenceRisk, levels = levels(datos_trainPOLETemporal$RecurrenceRisk))
+
+datos_trainPOLETemporal <- datos_trainPOLETemporal %>%
+  rename(recurrence_risk = `RecurrenceRisk`)
+
+datos_testPOLETemporal <- datos_testPOLETemporal %>%
+  rename(recurrence_risk = `RecurrenceRisk`)
+
+datos_ValidationPOLETemporal <- datos_ValidationPOLETemporal %>%
+  rename(recurrence_risk = `RecurrenceRisk`)
+
+datos_trainPOLETemporal <- datos_trainPOLETemporal %>%
+  mutate(across(where(is.character), as.factor))
+
+datos_testPOLETemporal <- datos_testPOLETemporal %>%
+  mutate(across(where(is.character), as.factor))
+
+datos_ValidationPOLETemporal <- datos_ValidationPOLETemporal %>%
+  mutate(across(where(is.character), as.factor))
+
+datos_trainPOLETemporal <- na.roughfix(datos_trainPOLETemporal)
+
+datos_testPOLETemporal <- na.roughfix(datos_testPOLETemporal)
+
+datos_ValidationPOLETemporal <- na.roughfix(datos_ValidationPOLETemporal)
+
+recipe_basePOLETemporal <- recipe(recurrence_risk ~ ., data = datos_trainPOLETemporal) %>%
+  step_zv(all_predictors()) %>%                      
+  step_normalize(all_numeric_predictors()) %>%    
+  step_dummy(all_nominal_predictors())           
+
+recipe_base_preparedPOLETemporal <- prep(recipe_basePOLETemporal, training = datos_trainPOLETemporal, retain = TRUE)
+
+datos_processedPOLETemporal <- juice(recipe_base_preparedPOLETemporal)
+
+model_rfPOLETemporal <- rand_forest(mode = "classification", trees = 500) %>%
+  set_engine("ranger", importance = "impurity")
+
+model_basePOLETemporal <- model_rfPOLETemporal %>%
+  fit(recurrence_risk ~ ., data = datos_processedPOLETemporal)
+
+vip_valsPOLETemporal <- model_basePOLETemporal %>% vi()
+
+sorted_variablesPOLETemporal <- vip_valsPOLETemporal %>%
+  arrange(desc(Importance)) %>%
+  pull(Variable)
+
+
+cv_foldsPOLETemporal <- vfold_cv(datos_trainPOLETemporal, v = 5, strata = recurrence_risk)
+
+evaluate_with_top_nPOLETemporal <- function(n) {
+  print(n)
+  n_local <- n
+  top_varsPOLE <- sorted_variablesPOLETemporal[1:n_local]
+  top_varsPOLE <- union(top_varsPOLE, "recurrence_risk")
+  
+  recipe_rfePOLETemporal <- recipe(recurrence_risk ~ ., data = datos_trainPOLETemporal) %>%
+    step_zv(all_predictors()) %>%
+    step_normalize(all_numeric_predictors()) %>%
+    step_dummy(all_nominal_predictors()) %>%
+    step_smote(recurrence_risk) %>%
+    step_select(all_of(top_varsPOLE))
+  
+  wf <- workflow() %>%
+    add_model(model_rfPOLETemporal) %>%
+    add_recipe(recipe_rfePOLETemporal)  
+
+  res <- fit_resamples(
+    wf,
+    resamples = cv_foldsPOLETemporal,
+    metrics = metric_set(accuracy, f_meas, kap, roc_auc, pr_auc),
+    control = control_resamples(save_pred = TRUE)
+  )
+  
+  collect_metrics(res) %>%
+    mutate(num_vars = n_local)
+}
+
+top_n_valuesPOLETemporal <- c(5:30)
+
+results_rfePOLETemporal <- map_dfr(top_n_valuesPOLETemporal, evaluate_with_top_nPOLETemporal)
+
+#saveRDS(results_rfePOLETemporal, "results_rfePOLETemporal.rds")
+#saveRDS(sorted_variablesPOLETemporal, "MoreToleastImportantFeaturesPOLETemporal.rds")
+#write.csv(results_rfePOLETemporal, "results_rfePOLETemporal.csv")
+
+best_nPOLETemporal <- results_rfePOLETemporal %>%
+  filter(.metric == "f_meas") %>%
+  arrange(desc(mean)) %>%
+  slice(1) %>%
+  pull(num_vars)
+
+cat("Best features subset according to F1-score:", best_nPOLETemporal, "\n")
+
+best_varsPOLETemporal <- sorted_variablesPOLETemporal[1:18]
+
+best_varsPOLETemporal <- setdiff(best_varsPOLETemporal, "recurrence_risk")
+
+recipe_finalPOLETemporal <- recipe(recurrence_risk ~ ., data = datos_trainPOLETemporal) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  update_role(recurrence_risk, new_role = "outcome") %>%
+  step_select(all_of(best_varsPOLETemporal), starts_with("recurrence_risk")) %>%
+  step_smote(recurrence_risk, skip = TRUE)
+
+prep(recipe_finalPOLETemporal, training = datos_trainPOLETemporal) %>% juice() %>% names() %>% any(. == "recurrence_risk")
+
+wf_finalPOLETemporal <- workflow() %>%
+  add_model(model_rfPOLETemporal) %>%
+  add_recipe(recipe_finalPOLETemporal)
+
+fit_finalPOLETemporal <- fit(
+  wf_finalPOLETemporal,
+  data = datos_trainPOLETemporal)
+
+recipe_evalPOLETemporal <- recipe_finalPOLETemporal %>% prep(training = datos_trainPOLETemporal, retain = TRUE)
+datos_train_bakePOLETemporal <- bake(recipe_evalPOLETemporal, new_data = datos_trainPOLETemporal)
+datos_test_bakePOLETemporal <- bake(recipe_evalPOLETemporal, new_data = datos_testPOLETemporal)
+datos_Validation_bakePOLETemporal <- bake(recipe_evalPOLETemporal, new_data = datos_ValidationPOLETemporal)
+```
+
+#### Training for ROC:
+
+```{r}
+set.seed(123)
+n_valores = 10
+seeds <- vector(mode = "list", length = 11)
+for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
+seeds[[11]] <- sample.int(1000, 1)
+
+fitControl <- trainControl(## 10-fold CV
+                           method = "repeatedcv",
+                           number = 10,
+                           ## repeated ten times
+                           repeats = 10,
+                           verboseIter=FALSE,
+                           allowParallel = TRUE,
+                           classProbs = T,
+                           summaryFunction = multiClassSummary)
+```
+
+```{r}
+opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal <- datos_train_bakePOLETemporal
+
+levels(opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal$recurrence_risk) <- c("EarlyRelapse", "LateRelpase","NoRelapse")
+
+opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal <- droplevels(opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal)
+
+opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal <- datos_test_bakePOLETemporal
+
+levels(opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal$recurrence_risk) <- c("EarlyRelapse", "LateRelpase","NoRelapse")
+
+opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal <- droplevels(opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal)
+
+gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9), 
+                        n.trees = (1:30)*50, 
+                        shrinkage = 0.1,
+                        n.minobsinnode = 20)
+                        
+set.seed(342)
+gbmFit2TP53tidymodelsPOLETemporal <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal, 
+                 method = "gbm", 
+                 trControl = fitControl, 
+                 verbose = FALSE, 
+                 tuneGrid = gbmGrid,
+                 metric="AUC")
+
+gbmFit2TP53tidymodelsPOLETemporal
+
+#saveRDS(gbmFit2TP53tidymodelsPOLETemporal, "gbmFit2TP53tidymodelsPOLETemporal.rds")
+#saveRDS(opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal, "opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal.rds")
+#saveRDS(opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal, "opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal.rds")
+
+#opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal <- readRDS("opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal.rds")
+
+#opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal <- readRDS("opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal.rds")
+
+#gbmFit2TP53tidymodelsPOLETemporal <- readRDS("gbmFit2TP53tidymodelsPOLETemporal.rds")
+```
+
+```{r}
+library(MLmetrics)
+
+MLmetrics::Accuracy(predict(gbmFit2TP53tidymodelsPOLETemporal,opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal),opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(gbmFit2TP53tidymodelsPOLETemporal,opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal),opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal$recurrence_risk)
+
+MLmetrics::F1_Score(predict(gbmFit2TP53tidymodelsPOLETemporal,opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal),opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal$recurrence_risk)
+
+MLmetrics::Accuracy(predict(gbmFit2TP53tidymodelsPOLETemporal,opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal),opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal$recurrence_risk)
+
+MLmetrics::Sensitivity(predict(gbmFit2TP53tidymodelsPOLETemporal,opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal),opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal$recurrence_risk)
+
+MLmetrics::F1_Score(predict(gbmFit2TP53tidymodelsPOLETemporal,opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal),opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal$recurrence_risk)
+```
+
+```{r}
+confusionMatrix(predict(gbmFit2TP53tidymodelsPOLETemporal,opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal),opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal$recurrence_risk)
+```
+
