@@ -195,7 +195,7 @@ metrics_mlmetrics <- function(data, lev = NULL, model = NULL) {
 }
 
 set.seed(123)
-n_values = 10
+n_values = 486
 seeds2 <- vector(mode = "list", length = 101)
 for(i in 1:100) seeds2[[i]] <- sample.int(1000, n_values)
 seeds2[[101]] <- sample.int(1000, 1)
@@ -232,9 +232,10 @@ opt.Datos.Test.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal <- drople
 
 ```{r}
 gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9), 
-                        n.trees = (1:17)*50, 
-                        shrinkage = 0.1,
-                        n.minobsinnode = 20)
+                        n.trees = (1:30)*50, 
+                        shrinkage = c(0.01,0.05,0.1),
+                        n.minobsinnode = c(5,10,20),
+                        subsample = c(0.5, 0.8, 1.0))
                         
 set.seed(342)
 gbmFit2TP53tidymodelsTraditionalTemporal <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurTraditionalROCtidymodelsTraditionalTemporal, 
@@ -449,7 +450,7 @@ datos_Validation_bakePOLETemporal <- bake(recipe_evalPOLETemporal, new_data = da
 
 ```{r}
 set.seed(123)
-n_valores = 10
+n_valores = 486
 seeds <- vector(mode = "list", length = 11)
 for(i in 1:10) seeds[[i]] <- sample.int(1000, n_valores)
 seeds[[11]] <- sample.int(1000, 1)
@@ -480,8 +481,9 @@ opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal <- droplevels(opt.Datos
 
 gbmGrid <-  expand.grid(interaction.depth = c(1, 5, 9), 
                         n.trees = (1:30)*50, 
-                        shrinkage = 0.1,
-                        n.minobsinnode = 20)
+                        shrinkage = c(0.01,0.05,0.1),
+                        n.minobsinnode = c(5,10,20),
+                        subsample = c(0.5, 0.8, 1.0))
                         
 set.seed(342)
 gbmFit2TP53tidymodelsPOLETemporal <- train(recurrence_risk ~ ., data = opt.Datos.Train.FinnishRecurPOLEROCtidymodelsPOLETemporal, 
@@ -523,4 +525,5 @@ MLmetrics::F1_Score(predict(gbmFit2TP53tidymodelsPOLETemporal,opt.Datos.Test.Fin
 ```{r}
 confusionMatrix(predict(gbmFit2TP53tidymodelsPOLETemporal,opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal),opt.Datos.Test.FinnishRecurPOLEROCtidymodelsPOLETemporal$recurrence_risk)
 ```
+
 
