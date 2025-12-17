@@ -1,0 +1,90 @@
+{
+  "R": {
+    "Version": "4.5.0",
+    "Repositories": [
+      {
+        "Name": "CRAN",
+        "URL": "https://cloud.r-project.org" 
+        // NOTE: A real lockfile would usually point to a dated CRAN mirror 
+        // for better reproducibility, e.g., "https://cran.microsoft.com/snapshot/[YYYY-MM-DD]/"
+      }
+    ]
+  },
+  "Packages": {
+    "caret": {
+      "Package": "caret",
+      "Version": "7.0.1",
+      "Source": "CRAN",
+      "Hash": "[A UNIQUE SHA256 HASH FOR THIS VERSION]",
+      "RemoteType": "cran",
+      "Repository": "CRAN"
+      // Note: A real lockfile would also list its direct dependencies (e.g., ggplot2, etc.)
+    },
+    "dplyr": {
+      "Package": "dplyr",
+      "Version": "1.1.4",
+      "Source": "CRAN",
+      "Hash": "[A UNIQUE SHA256 HASH FOR THIS VERSION]",
+      "RemoteType": "cran",
+      "Repository": "CRAN"
+    },
+    "finalfit": {
+      "Package": "finalfit",
+      "Version": "1.0.8",
+      "Source": "CRAN",
+      "Hash": "[A UNIQUE SHA256 HASH FOR THIS VERSION]",
+      "RemoteType": "cran",
+      "Repository": "CRAN"
+    },
+    "gbm": {
+      "Package": "gbm",
+      "Version": "2.2.2",
+      "Source": "CRAN",
+      "Hash": "[A UNIQUE SHA256 HASH FOR THIS VERSION]",
+      "RemoteType": "cran",
+      "Repository": "CRAN"
+    },
+    "ggplot2": {
+      "Package": "ggplot2",
+      "Version": "3.5.2",
+      "Source": "CRAN",
+      "Hash": "[A UNIQUE SHA256 HASH FOR THIS VERSION]",
+      "RemoteType": "cran",
+      "Repository": "CRAN"
+    },
+    "ggVennDiagram": {
+      "Package": "ggVennDiagram",
+      "Version": "1.5.3",
+      "Source": "CRAN",
+      "Hash": "[A UNIQUE SHA256 HASH FOR THIS VERSION]",
+      "RemoteType": "cran",
+      "Repository": "CRAN"
+    },
+    // ... (Continue adding all other 17 packages in this format) ...
+    "readr": {
+      "Package": "readr",
+      "Version": "2.1.5",
+      "Source": "CRAN",
+      "Hash": "[A UNIQUE SHA256 HASH FOR THIS VERSION]",
+      "RemoteType": "cran",
+      "Repository": "CRAN"
+    },
+    "tidyverse": {
+      "Package": "tidyverse",
+      "Version": "2.0.0",
+      "Source": "CRAN",
+      "Hash": "[A UNIQUE SHA256 HASH FOR THIS VERSION]",
+      "RemoteType": "cran",
+      "Repository": "CRAN"
+    },
+    "tidymodels": {
+      "Package": "tidymodels",
+      "Version": "1.3.0",
+      "Source": "CRAN",
+      "Hash": "[A UNIQUE SHA256 HASH FOR THIS VERSION]",
+      "RemoteType": "cran",
+      "Repository": "CRAN"
+    }
+    // ... (All packages, including purrr, rlang, etc. must be listed here) ...
+  }
+}
